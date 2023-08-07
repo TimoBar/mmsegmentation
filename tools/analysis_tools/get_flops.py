@@ -12,6 +12,7 @@ from mmengine.registry import init_default_scope
 from mmseg.models import BaseSegmentor
 from mmseg.registry import MODELS
 from mmseg.structures import SegDataSample
+from scripts.get_flops_segformer import get_additional_segformer_flops
 
 try:
     from mmengine.analysis import get_model_complexity_info
@@ -86,12 +87,15 @@ def inference(args: argparse.Namespace, logger: MMLogger) -> dict:
                                   'supported yet.')
     outputs = get_model_complexity_info(
         model,
-        input_shape,
         inputs=data['inputs'],
-        show_table=False,
-        show_arch=False)
+        show_table=True,
+        show_arch=True)
+    if "segformer" in args.config:
+        stage1, stage2, stage3, stage4 = get_additional_segformer_flops(model, input_shape=input_shape)
+        outputs['flops'] += stage1 + stage2 + stage3 + stage4
     result['flops'] = _format_size(outputs['flops'])
     result['params'] = _format_size(outputs['params'])
+    result['complexity_table'] = outputs['out_table']
     result['compute_type'] = 'direct: randomly generate a picture'
     return result
 
@@ -108,6 +112,7 @@ def main():
     flops = result['flops']
     params = result['params']
     compute_type = result['compute_type']
+    complexity_table = result['complexity_table']
 
     if pad_shape != ori_shape:
         print(f'{split_line}\nUse size divisor set input shape '
@@ -115,6 +120,7 @@ def main():
     print(f'{split_line}\nCompute type: {compute_type}\n'
           f'Input shape: {pad_shape}\nFlops: {flops}\n'
           f'Params: {params}\n{split_line}')
+    print(complexity_table)
     print('!!!Please be cautious if you use the results in papers. '
           'You may need to check if all ops are supported and verify '
           'that the flops computation is correct.')

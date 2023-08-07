@@ -1,8 +1,13 @@
 import argparse
 
+from mmengine.runner import Runner
+
+from mmseg.models.segmentors.encoder_decoder import *
+from mmseg.registry import MODELS
 from mmengine import Config
 from mmcv.cnn import get_model_complexity_info
 from mmcv.cnn.utils.flops_counter import flops_to_string, params_to_string
+from mmengine.runner.checkpoint import _load_checkpoint, _load_checkpoint_to_model
 
 from mmseg.models import build_segmentor
 import torch
@@ -18,6 +23,11 @@ def parse_args():
         nargs='+',
         default=[2048, 1024],
         help='input image size')
+    parser.add_argument(
+        '--load-from',
+        type=str,
+        default=None,
+        help='load checkpoint')
     args = parser.parse_args()
     return args
 
@@ -107,10 +117,22 @@ def main():
 
     cfg = Config.fromfile(args.config)
     cfg.model.pretrained = None
-    model = build_segmentor(
-        cfg.model,
-        train_cfg=cfg.get('train_cfg'),
-        test_cfg=cfg.get('test_cfg')).cuda()
+    #cfg.model.pop("train_cfg")
+    #cfg.model.pop("test_cfg")
+    #model = MODELS.build(cfg.model)
+    cfg.work_dir = 'inference_results'
+    runner = Runner.from_cfg(cfg)
+    #runner.model.eval()
+    #model = build_segmentor(
+        #cfg.model#,
+        #train_cfg=cfg.get('train_cfg'),
+        #test_cfg=cfg.get('test_cfg')
+    #).cuda()
+    model = runner.model.cuda()
+    if args.load_from is not None:
+        checkpoint = _load_checkpoint(args.load_from, map_location='cpu')
+        _load_checkpoint_to_model(model, checkpoint)
+        model = model.cuda()
     model.eval()
 
     if hasattr(model, 'forward_dummy'):

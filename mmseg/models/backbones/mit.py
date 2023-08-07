@@ -5,7 +5,7 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
-from mmcv.cnn import Conv2d, build_activation_layer, build_norm_layer
+from mmcv.cnn import build_activation_layer, build_norm_layer#, Conv2d
 from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.cnn.bricks.transformer import MultiheadAttention
 from mmengine.model import BaseModule, ModuleList, Sequential
@@ -14,7 +14,6 @@ from mmengine.model.weight_init import (constant_init, normal_init,
 
 from mmseg.registry import MODELS
 from ..utils import PatchEmbed, nchw_to_nlc, nlc_to_nchw
-
 
 class MixFFN(BaseModule):
     """An implementation of MixFFN of Segformer.
@@ -45,6 +44,7 @@ class MixFFN(BaseModule):
                  dropout_layer=None,
                  init_cfg=None):
         super().__init__(init_cfg)
+        from mmcv.cnn import Conv2d
 
         self.embed_dims = embed_dims
         self.feedforward_channels = feedforward_channels
@@ -134,6 +134,7 @@ class EfficientMultiheadAttention(MultiheadAttention):
             init_cfg=init_cfg,
             batch_first=batch_first,
             bias=qkv_bias)
+        from mmcv.cnn import Conv2d
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:

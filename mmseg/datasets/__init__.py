@@ -37,6 +37,7 @@ from .transforms import (CLAHE, AdjustGamma, Albu, BioMedical3DPad,
                          ResizeShortestEdge, ResizeToMultiple, RGB2Gray,
                          SegRescale)
 from .voc import PascalVOCDataset
+from .cityscapes_vss import CityscapesVideoDataset
 
 # yapf: enable
 __all__ = [
@@ -57,5 +58,5 @@ __all__ = [
     'SynapseDataset', 'REFUGEDataset', 'MapillaryDataset_v1',
     'MapillaryDataset_v2', 'Albu', 'LEVIRCDDataset',
     'LoadMultipleRSImageFromFile', 'LoadSingleRSImageFromFile',
-    'ConcatCDInput', 'BaseCDDataset', 'DSDLSegDataset'
+    'ConcatCDInput', 'BaseCDDataset', 'DSDLSegDataset', 'CityscapesVideoDataset'
 ]

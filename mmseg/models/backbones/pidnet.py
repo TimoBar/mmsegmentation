@@ -483,11 +483,14 @@ class PIDNet(BaseModule):
         comp_i = self.compression_1(x_i)
         x_p = self.pag_1(x_p, comp_i)
         diff_i = self.diff_1(x_i)
-        x_d += F.interpolate(
+
+        tmp = F.interpolate(
             diff_i,
-            size=[h_out, w_out],
+            size=[x_d.shape[-2], x_d.shape[-1]],
             mode='bilinear',
             align_corners=self.align_corners)
+        x_d += tmp
+
         if self.training:
             temp_p = x_p.clone()
 
@@ -501,7 +504,7 @@ class PIDNet(BaseModule):
         diff_i = self.diff_2(x_i)
         x_d += F.interpolate(
             diff_i,
-            size=[h_out, w_out],
+            size=[x_d.shape[-2], x_d.shape[-1]],
             mode='bilinear',
             align_corners=self.align_corners)
         if self.training:
@@ -515,7 +518,7 @@ class PIDNet(BaseModule):
         x_i = self.spp(x_i)
         x_i = F.interpolate(
             x_i,
-            size=[h_out, w_out],
+            size=[x_d.shape[-2], x_d.shape[-1]],
             mode='bilinear',
             align_corners=self.align_corners)
         out = self.dfm(x_p, x_i, x_d)

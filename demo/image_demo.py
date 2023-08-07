@@ -24,12 +24,17 @@ def main():
     args = parser.parse_args()
 
     # build the model from a config file and a checkpoint file
+    print("Create Model")
     model = init_model(args.config, args.checkpoint, device=args.device)
+    print("Model created")
     if args.device == 'cpu':
         model = revert_sync_batchnorm(model)
     # test a single image
+    print("Start Inference")
     result = inference_model(model, args.img)
+    print("Inference finished")
     # show the results
+    print(result)
     show_result_pyplot(
         model,
         args.img,

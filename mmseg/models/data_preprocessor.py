@@ -149,3 +149,20 @@ class SegDataPreProcessor(BaseDataPreprocessor):
                 inputs = torch.stack(inputs, dim=0)
 
         return dict(inputs=inputs, data_samples=data_samples)
+
+@MODELS.register_module()
+class SeqSegDataPreProcessor(SegDataPreProcessor):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, data: dict, training: bool = False) -> Dict[str, Any]:
+        inputs = []
+        data_samples = []
+
+        for _data in data:
+            _data = super().forward(_data, training)
+            inputs.append(_data["inputs"])
+            data_samples.append(_data["data_samples"])
+
+        return dict(inputs=inputs, data_samples=data_samples)

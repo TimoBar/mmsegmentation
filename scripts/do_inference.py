@@ -22,15 +22,19 @@ def main():
     parser.add_argument('--config', help='path to the configuration yaml file as in tables/from_mmseg/all.csv')
     parser.add_argument('--no_ckpt', action='store_true', help='do not initialize weights from checkpoint')
     parser.add_argument('--prefix', default=None, help='prefix to indicate the hardware used')
+    parser.add_argument('--checkpoint-path', default=None, help='path to the checkpoint file')
     args = parser.parse_args()
-    do_inference(args.config, not args.no_ckpt, prefix=args.prefix)
+    do_inference(args.config, not args.no_ckpt, prefix=args.prefix, checkpoint_path=args.checkpoint_path)
 
 
-def do_inference(config_path, use_ckpt=True, input_shape=(3, 512, 512), prefix=None):
+def do_inference(config_path, use_ckpt=True, input_shape=(3, 512, 512), prefix=None, checkpoint_path=None):
     debug = (not torch.cuda.is_available()) or (os.environ.get('MACHINE', default='cluster') != 'cluster')
     print(f'{debug=}')
     repeat_times, n_images_benchmark, n_warmup, n_images_total = (6, 4, 2, 5) if debug else (3, 250, 50, None)
-    ckpt = get_checkpoint(config_path) if use_ckpt else None
+    if checkpoint_path is None:
+        ckpt = get_checkpoint(config_path) if use_ckpt else None
+    else:
+        ckpt = checkpoint_path
     register_all_modules()
     cfg = Config.fromfile(config_path)
     if n_images_total:  # if not specified use entire dataset
@@ -67,7 +71,7 @@ def do_inference(config_path, use_ckpt=True, input_shape=(3, 512, 512), prefix=N
             batch['data_samples'] = None
         return batch
 
-    runner.test_dataloader.dataset.pipeline.transforms.insert(2, CenterCrop(crop_size=(512, 512)))
+    #runner.test_dataloader.dataset.pipeline.transforms.insert(2, CenterCrop(crop_size=(512, 512)))
 
     #flops, params = get_model_complexity_info(runner.model, input_shape, as_strings=False,
     #                                          input_constructor=input_ctor # needed?
@@ -75,7 +79,7 @@ def do_inference(config_path, use_ckpt=True, input_shape=(3, 512, 512), prefix=N
 
     outputs = get_model_complexity_info(
         runner.model, input_shape,
-        show_table=False,
+        show_table=True,
         show_arch=False)
 
     flops = _format_size(outputs['flops'])

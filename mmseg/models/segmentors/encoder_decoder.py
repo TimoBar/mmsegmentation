@@ -9,6 +9,7 @@ from mmseg.registry import MODELS
 from mmseg.utils import (ConfigType, OptConfigType, OptMultiConfig,
                          OptSampleList, SampleList, add_prefix)
 from .base import BaseSegmentor
+import time
 
 
 @MODELS.register_module()
@@ -123,9 +124,15 @@ class EncoderDecoder(BaseSegmentor):
                       batch_img_metas: List[dict]) -> Tensor:
         """Encode images with backbone and decode into a semantic segmentation
         map of the same size as input."""
+        #start = time.time()
         x = self.extract_feat(inputs)
+        #end = time.time()
+        #print(f"backbone needed {end - start} ms")
+        #start = time.time()
         seg_logits = self.decode_head.predict(x, batch_img_metas,
                                               self.test_cfg)
+        #end = time.time()
+        #print(f"head needed {end - start} ms")
 
         return seg_logits
 
@@ -168,7 +175,6 @@ class EncoderDecoder(BaseSegmentor):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-
         x = self.extract_feat(inputs)
 
         losses = dict()
@@ -259,6 +265,7 @@ class EncoderDecoder(BaseSegmentor):
 
         h_stride, w_stride = self.test_cfg.stride
         h_crop, w_crop = self.test_cfg.crop_size
+        #print(inputs)
         batch_size, _, h_img, w_img = inputs.size()
         out_channels = self.out_channels
         h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
