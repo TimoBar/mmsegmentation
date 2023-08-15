@@ -46,7 +46,7 @@ class PrunedEncoderDecoder(EncoderDecoder):
         mask_loss = get_p1_loss(self) * self.mask_factor
         losses["decode.mask_loss"] = mask_loss
         losses["decode.loss_ce"] = losses["decode.loss_ce"]
-        losses.update(add_prefix(get_num_pruned(self), 'decode.pruned'))
+        #losses.update(add_prefix(get_num_pruned(self), 'decode.pruned'))
 
         if self.with_auxiliary_head:
             loss_aux = self._auxiliary_head_forward_train(x, data_samples)

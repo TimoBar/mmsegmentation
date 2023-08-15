@@ -15,7 +15,7 @@ from mmseg.structures import SegDataSample
 from scripts.get_flops_segformer import get_additional_segformer_flops
 
 try:
-    from mmengine.analysis import get_model_complexity_info
+    from mmengine.analysis import get_model_complexity_info, FlopAnalyzer
     from mmengine.analysis.print_helper import _format_size
 except ImportError:
     raise ImportError('Please upgrade mmengine >= 0.6.0 to use this script.')
@@ -85,14 +85,16 @@ def inference(args: argparse.Namespace, logger: MMLogger) -> dict:
         # TODO: Support MaskFormer and Mask2Former
         raise NotImplementedError('MaskFormer and Mask2Former are not '
                                   'supported yet.')
+    #flop_handler = FlopAnalyzer(model, data['inputs'])
+
     outputs = get_model_complexity_info(
         model,
         inputs=data['inputs'],
         show_table=True,
         show_arch=True)
-    if "segformer" in args.config:
-        stage1, stage2, stage3, stage4 = get_additional_segformer_flops(model, input_shape=input_shape)
-        outputs['flops'] += stage1 + stage2 + stage3 + stage4
+    #if "segformer" in args.config:
+    #    stage1, stage2, stage3, stage4 = get_additional_segformer_flops(model, input_shape=input_shape)
+    #    outputs['flops'] += stage1 + stage2 + stage3 + stage4
     result['flops'] = _format_size(outputs['flops'])
     result['params'] = _format_size(outputs['params'])
     result['complexity_table'] = outputs['out_table']

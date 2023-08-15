@@ -121,8 +121,6 @@ def main():
         overwrite_classes_logistic_kernel_pruning()
     elif args.pruning_mode == "static":
         overwrite_classes_static_pruning()
-    elif args.pruning_mode == "segformer":
-        pass
     elif args.pruning_mode == "acosp":
         pass
     else:
@@ -168,11 +166,8 @@ def main():
 
     if args.pruning_mode == "acosp":
         cfg["custom_hooks"] = [dict(type='AcospHook', interval=2975, max_iters=cfg.train_cfg.max_iters)]
-    elif args.pruning_mode == "logistic" or args.pruning_mode == "logistic_kernel" or args.pruning_mode == "segformer":
-        pruning_hook = dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, logging_interval=5000, pruning_interval=5000)
-        fps_hook = dict(type='FPSMeasureHook', interval=5000)
-        flops_hook = dict(type='FLOPSMeasureHook', interval=5000, input_shape=(2048,1024))
-        cfg["custom_hooks"] = [pruning_hook, fps_hook, flops_hook]
+    elif args.pruning_mode == "logistic" or args.pruning_mode == "logistic_kernel":
+        cfg["custom_hooks"] = [dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, logging_interval=5000, pruning_interval=10)]
 
     # build the runner from config
     if 'runner_type' not in cfg:

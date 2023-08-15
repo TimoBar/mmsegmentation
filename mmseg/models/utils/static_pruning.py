@@ -8,15 +8,16 @@ from torch.nn.init import xavier_uniform_, constant_, xavier_normal_
 import torch
 from torch import optim
 
+from mmseg.models.utils.mask_wrapper import LearnableMask
+
 
 def get_weighting_matrix(b, rows, columns):
-    return torch.ones((rows, columns)) * b.unsqueeze(1).expand(rows, columns)
+    return torch.ones((rows, columns)).cuda() * b.unsqueeze(1).expand(rows, columns).cuda()
 
-class StaticMaskLinear(nn.Module):
+class StaticMaskLinear(LearnableMask):
     def __init__(self, size_weight, size_bias, mask_dim=0, factor=1.0):
         super().__init__()
         self.factor = factor
-        #self.permutation = None
         self.size_weight = size_weight
         self.size_bias = size_bias
         self.size_together = list(size_weight)
@@ -24,7 +25,6 @@ class StaticMaskLinear(nn.Module):
         self.size_together[-1] = self.size_weight[-1] + 1 # because of bias
 
         self.dim = mask_dim
-        self.permutation_initialized = False
 
         self.pruning_size = self.size_weight[self.dim]
         self.p1 = torch.nn.parameter.Parameter(torch.ones((self.pruning_size), requires_grad=True)*self.factor)
@@ -34,9 +34,9 @@ class StaticMaskLinear(nn.Module):
             self.non_pruning_size = self.size_together[1]
 
     def get_loss(self):
-        return torch.abs(self.p1)
+        return torch.sum(torch.abs(self.p1))
     def get_mask(self):
-        return get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size]).cuda()), self.pruning_size, self.non_pruning_size)[self.permutation]
+        return get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size]).cuda()), self.pruning_size, self.non_pruning_size)
 
 class StaticMaskConv2d(StaticMaskLinear):
     def __init__(self, input_features, output_features, kernel_size, factor=100.0):

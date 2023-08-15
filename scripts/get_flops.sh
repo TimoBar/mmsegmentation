@@ -8,4 +8,4 @@
 module load comp/gcc/11.2.0
 module load anaconda
 source activate openmmlab
-srun python -u tools/analysis_tools/get_flops.py $1 $2 $3
+srun python -u tools/analysis_tools/get_flops.py "${@:1}"

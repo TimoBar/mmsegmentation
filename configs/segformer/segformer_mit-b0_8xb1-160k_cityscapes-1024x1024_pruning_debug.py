@@ -10,7 +10,8 @@ model = dict(
     type="PrunedEncoderDecoder",
     mask_factor=0.1,
     data_preprocessor=data_preprocessor,
-    backbone=dict(init_cfg=dict(type='Pretrained', checkpoint=checkpoint)),
+    backbone=dict(type='MixVisionTransformerPrunable', init_cfg=dict(type='Pretrained', checkpoint=checkpoint)),
+    decode_head=dict(type="SegformerHeadPrunable"),
     test_cfg=dict(mode='slide', crop_size=(1024, 1024), stride=(768, 768)))
 
 optim_wrapper = dict(
@@ -38,16 +39,6 @@ param_scheduler = [
         by_epoch=False,
     )
 ]
-
-train_cfg = dict(
-    type='IterBasedTrainLoop', max_iters=160000, val_interval=200)
-default_hooks = dict(
-    timer=dict(type='IterTimerHook'),
-    logger=dict(type='LoggerHook', interval=50, log_metric_by_epoch=False),
-    param_scheduler=dict(type='ParamSchedulerHook'),
-    checkpoint=dict(type='CheckpointHook', by_epoch=False, interval=200),
-    sampler_seed=dict(type='DistSamplerSeedHook'),
-    visualization=dict(type='SegVisualizationHook'))
 
 train_dataloader = dict(batch_size=1, num_workers=4)
 val_dataloader = dict(batch_size=1, num_workers=4)
