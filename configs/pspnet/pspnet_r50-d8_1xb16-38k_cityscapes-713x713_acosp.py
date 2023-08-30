@@ -1,12 +1,12 @@
 _base_ = [
     '../_base_/models/pspnet_r50-d8.py',
-    '../_base_/datasets/cityscapes_769x769.py', '../_base_/default_runtime.py'
+    '../_base_/datasets/cityscapes_713x713.py', '../_base_/default_runtime.py'
 ]
 # optimizer
 optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
 optim_wrapper = dict(
-    _delete_=True,
     type='OptimWrapper',
+    clip_grad=None,
     optimizer=optimizer,
     paramwise_cfg=dict(
         custom_keys={
@@ -24,7 +24,7 @@ param_scheduler = [
         by_epoch=False)
 ]
 # training schedule for 320k
-max_iters = 595000
+max_iters = 38000
 train_cfg = dict(
     type='IterBasedTrainLoop', max_iters=max_iters, val_interval=max_iters//10)
 val_cfg = dict(type='ValLoop')

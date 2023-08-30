@@ -10,23 +10,26 @@ from torch import optim
 
 
 
-def logistic_function(x, k, b):
+def logistic_function(x, k, b, epsilon=5e-5):
     # print(f"x: {x}, k: {k}, b: {b}, x-b: {x-b}, -k*(x-b): {-k * (x - b)}")
     #print(x.device, b.device)
-    e = torch.clip(-k * (x - b), max=20.0)
+    e = torch.clip(-k * (x - b), max=10.0)
     res = 1 / (1 + torch.exp(e))
+    res[res != torch.clamp(res, epsilon)] = 0
     return res
 
 
-def get_index_matrix(rows, colums):
-    arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).cuda()
+def get_index_matrix(rows, colums, device="cuda"):
+    arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).to(device)
     for i in range(rows):
         arr[i] = i
     return arr
 
 
-def get_weighting_matrix(b, rows, columns, k=3):
-    return logistic_function(get_index_matrix(rows, 1), k, b).expand(rows, columns)
+def get_weighting_matrix(b, rows, columns, k=3, device="cuda"):
+    res = logistic_function(get_index_matrix(rows, 1, device), k, b).expand(rows, columns)
+    #print(logistic_function(get_index_matrix(rows, 1), k, b))
+    return res
 
 
 def calc_dummy_loss(weighting_matrix):
@@ -34,6 +37,7 @@ def calc_dummy_loss(weighting_matrix):
 
 
 def get_permutation_vector(weight):
+    #print("get_permutation called")
     return torch.argsort(torch.sum(torch.abs(weight), dim=1))
 
 class LearnableMask(nn.Module):
@@ -41,9 +45,10 @@ class LearnableMask(nn.Module):
         super().__init__(*args, **kw)
 
 class LearnableMaskLinear(LearnableMask):
-    def __init__(self, size_weight, size_bias, mask_dim=0, factor=100.0):
+    def __init__(self, size_weight, size_bias, mask_dim=0, factor=100.0, k=7):
         super().__init__()
-        self.p1 = torch.nn.parameter.Parameter(torch.tensor([-1 / factor], requires_grad=True).cuda())
+        self.k = k
+        self.p1 = torch.nn.parameter.Parameter(torch.tensor([-1 / factor], requires_grad=True))
         self.factor = factor
         # self.permutation = None
         self.size_weight = size_weight
@@ -61,7 +66,10 @@ class LearnableMaskLinear(LearnableMask):
         else:
             self.non_pruning_size = self.size_together[1]
 
-        self.register_buffer("permutation", torch.zeros(self.pruning_size).int().cuda())
+        self.register_buffer("permutation", torch.zeros(self.pruning_size).int().to(self.get_device()))
+
+    def get_device(self):
+        return self.p1.device
 
     def reinit(self, size_weight, size_bias, mask_dim=0):
         dim_diff = self.pruning_size - size_weight[mask_dim]
@@ -87,7 +95,7 @@ class LearnableMaskLinear(LearnableMask):
             new_perm = self.permutation - dim_diff
             keep_rows = torch.where(new_perm < 0, 0, 1).nonzero(as_tuple=True)[0].tolist()
             new_perm = new_perm[keep_rows]
-            zero_to_n = torch.argsort(torch.zeros_like(new_perm)).cuda()
+            zero_to_n = torch.argsort(torch.zeros_like(new_perm)).to(self.get_device()).to(new_perm.dtype)
             new_perm[torch.argsort(new_perm)] = zero_to_n
             self.permutation = new_perm
     def check_permutation_initialized(self):
@@ -104,28 +112,27 @@ class LearnableMaskLinear(LearnableMask):
         if not self.permutation_initialized:
             self.permutation_initialized = True
 
-        # w = get_weighting_matrix(torch.min(self.p1, torch.tensor([self.pruning_size * 1.0])), self.pruning_size, self.non_pruning_size)
         wb = torch.hstack([weight, torch.unsqueeze(bias, -1)])
         self.permutation = get_permutation_vector(wb)
 
     def get_loss(self):
         # return 1/(torch.min(self.p1, torch.tensor([self.pruning_size])) + 5) - 0.001 * self.p1 * self.p1
         # return 1/(torch.min(self.p1, torch.tensor([self.pruning_size])) + 5) - 0.001 * self.p1 * self.p1
-        return - torch.min(self.p1, torch.tensor([self.non_pruning_size]).cuda())
+        return - torch.min(self.p1, torch.tensor([self.non_pruning_size + 5]).to(self.get_device()))
 
     def get_mask(self):
-        mask = get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size]).cuda()),
-                                    self.pruning_size, self.non_pruning_size)[self.permutation]
+        mask = get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size]).to(self.get_device())),
+                                    self.pruning_size, self.non_pruning_size, k=self.k, device=self.get_device())[self.permutation]
         mask_weight = mask[:, 0:-1]
         mask_bias = mask[:, -1]
         return mask_weight, mask_bias
 
 
 class LearnableMaskConv2d(LearnableMaskLinear):
-    def __init__(self, input_features, output_features, kernel_size, factor=100.0):
+    def __init__(self, input_features, output_features, kernel_size, factor=100.0, k=7):
         size_weight = (output_features, kernel_size * kernel_size * input_features)
         size_bias = output_features
-        super().__init__(size_weight, size_bias, mask_dim=0, factor=factor)
+        super().__init__(size_weight, size_bias, mask_dim=0, factor=factor, k=k)
         self.input_features = input_features
         self.output_features = output_features
         self.kernel_size = kernel_size
@@ -150,10 +157,10 @@ class LearnableMaskConv2d(LearnableMaskLinear):
 
 
 class LearnableMaskMHA(LearnableMaskLinear):
-    def __init__(self, input_features, output_features, kernel_size, num_heads, factor=100.0):
+    def __init__(self, input_features, output_features, kernel_size, num_heads, factor=100.0, k=7):
         size_weight = (output_features // num_heads, kernel_size * kernel_size * input_features)
         size_bias = output_features // num_heads
-        super().__init__(size_weight, size_bias // num_heads, mask_dim=0, factor=factor)
+        super().__init__(size_weight, size_bias // num_heads, mask_dim=0, factor=factor, k=k)
         self.input_features = input_features
         self.output_features = output_features // num_heads
         self.kernel_size = kernel_size
@@ -181,11 +188,11 @@ class LearnableMaskMHA(LearnableMaskLinear):
         return weight_mask_r, bias_mask_r
 
 class LearnableMaskMHALinear(LearnableMaskLinear):
-    def __init__(self, size_weight, size_bias, num_heads, mask_dim=0, factor=100.0):
+    def __init__(self, size_weight, size_bias, num_heads, mask_dim=0, factor=100.0, k=7):
         output_features, input_features = size_weight
         size_weight = (output_features // num_heads, input_features)
         self.num_heads = num_heads
-        super().__init__(size_weight, size_bias // num_heads, mask_dim, factor)
+        super().__init__(size_weight, size_bias // num_heads, mask_dim, factor, k=k)
 
     def reinit(self, size_weight, size_bias, mask_dim=0):
         output_features, input_features = size_weight
@@ -207,6 +214,8 @@ class LearnableMaskMHALinear(LearnableMaskLinear):
         mask_weight, mask_bias = super().get_mask()
         out_proj_weight_mask = mask_weight.expand(self.num_heads, self.pruning_size, self.non_pruning_size-1).reshape(self.num_heads * self.pruning_size, self.non_pruning_size-1)
         out_proj_bias_mask = mask_bias.expand(self.num_heads, self.pruning_size).reshape(self.num_heads * self.pruning_size)
+        transpose = out_proj_weight_mask.permute(1, 0)
+        out_proj_weight_mask = out_proj_weight_mask * transpose
         in_proj_weight_mask = out_proj_weight_mask.expand(3, self.num_heads * self.pruning_size, self.non_pruning_size-1).reshape(3 * self.num_heads * self.pruning_size, self.non_pruning_size-1)
         in_proj_bias_mask = out_proj_bias_mask.expand(3, self.num_heads * self.pruning_size).reshape(3 * self.num_heads * self.pruning_size)
         return in_proj_weight_mask, in_proj_bias_mask, out_proj_weight_mask, out_proj_bias_mask
@@ -219,7 +228,7 @@ class LearnableKernelMask(LearnableMask):
 
     def get_index_matrix(self, rows, colums):
         if rows % 2 == 1:
-            arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).cuda()
+            arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).to(self.get_device())
             for i in range(rows):
                 arr[i] = (rows // 2 - abs(rows // 2 - i)) * 2
             for i in range(rows - rows // 2 - 1):
@@ -231,11 +240,12 @@ class LearnableKernelMask(LearnableMask):
                 arr[i + rows // 2] = arr[i + rows // 2] - 2
             return arr
 
-    def __init__(self, input_features, output_features, kernel_size, factor=100.0, loss_factor=10.0):
+    def __init__(self, input_features, output_features, kernel_size, factor=100.0, loss_factor=10.0, k=7):
         super().__init__()
         size_weight = (output_features, kernel_size * kernel_size * input_features)
         size_bias = output_features
-        self.p1 = torch.nn.parameter.Parameter(-1*torch.ones((output_features * 2)).cuda() / factor, requires_grad=True)
+        self.k = k
+        self.p1 = torch.nn.parameter.Parameter(-1*torch.ones((output_features * 2)).to(self.get_device()) / factor, requires_grad=True)
         self.factor = factor
         self.size_weight = size_weight
         self.size_bias = size_bias
@@ -259,10 +269,10 @@ class LearnableKernelMask(LearnableMask):
         b_x = self.p1[0:self.p1.size(0) // 2] * self.factor
         b_y = self.p1[self.p1.size(0) // 2:] * self.factor
         m_x = self.get_weighting_matrix(b_x, self.output_features, self.kernel_size,
-                                        self.kernel_size * self.input_features, k=3).reshape(
+                                        self.kernel_size * self.input_features, k=self.k).reshape(
             (self.output_features, self.kernel_size, self.input_features, self.kernel_size)).permute((0, 2, 1, 3))
         m_y = self.get_weighting_matrix(b_y, self.output_features, self.kernel_size,
-                                        self.kernel_size * self.input_features, k=3).reshape(
+                                        self.kernel_size * self.input_features, k=self.k).reshape(
             (self.output_features, self.kernel_size, self.input_features, self.kernel_size)).permute((0, 2, 3, 1))
 
         mask = m_x * m_y
@@ -299,7 +309,7 @@ def rdelattr(obj, attr, *args):
     return functools.reduce(_delattr, [obj] + attr.split('.'))
 
 
-def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
+def mask_class_wrapper(super_class, mode="linear", embedded_dims=64, k=3):
     def init_masks(self):
         self.masks = {}
         for i, name in enumerate(self.names):
@@ -312,20 +322,24 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
                 if mode == "conv":
                     size_weight = rgetattr(self, name).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableMaskConv2d(feature_input, feature_output, kernel_size)
+                    self.masks[name] = LearnableMaskConv2d(feature_input, feature_output, kernel_size, k=k)
+
+                    # for ConvModule
+                    if i < len(self.names) - 2 and "bn.bias" in self.names[i + 2]:
+                        self.masks[self.names[i + 2]] = self.masks[name]
                 elif mode == "kernel":
                     size_weight = rgetattr(self, name).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableKernelMask(feature_input, feature_output, kernel_size)
+                    self.masks[name] = LearnableKernelMask(feature_input, feature_output, kernel_size, k=k)
                 elif mode == "mha_conv":
                     size_weight = rgetattr(self, name).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableMaskMHA(feature_input, feature_output, kernel_size, feature_output//embedded_dims)
+                    self.masks[name] = LearnableMaskMHA(feature_input, feature_output, kernel_size, feature_output//embedded_dims, k=k)
                 elif mode == "mha_linear":#out_proj.weight, out_proj.bias, in_proj_weight, in_proj_bias
                     size_weight = rgetattr(self, name).size()
                     size_bias = size_weight[0]
                     if "out_proj.weight" in name:
-                        self.masks[name] = LearnableMaskMHALinear(size_weight, int(size_bias), int(size_bias//embedded_dims))
+                        self.masks[name] = LearnableMaskMHALinear(size_weight, int(size_bias), int(size_bias//embedded_dims), k=k)
                         self.masks["in_proj_weight"] = self.masks[name]
             # If current name is bias and the previous name in the list was weight
             # -> weight and bias belong together
@@ -334,28 +348,28 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
                 if mode == "linear":
                     size_bias = rgetattr(self, name).size()
                     size_weight = rgetattr(self, self.names[i - 1]).size()
-                    self.masks[name] = LearnableMaskLinear(size_weight, size_bias)
+                    self.masks[name] = LearnableMaskLinear(size_weight, size_bias, k=k)
                     self.masks[self.names[i - 1]] = self.masks[name]
                 elif mode == "conv":
                     size_weight = rgetattr(self, self.names[i - 1]).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableMaskConv2d(feature_input, feature_output, kernel_size)
+                    self.masks[name] = LearnableMaskConv2d(feature_input, feature_output, kernel_size, k=k)
                     self.masks[self.names[i - 1]] = self.masks[name]
                 elif mode == "kernel":
                     size_weight = rgetattr(self, self.names[i - 1]).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableKernelMask(feature_input, feature_output, kernel_size)
+                    self.masks[name] = LearnableKernelMask(feature_input, feature_output, kernel_size, k=k)
                     self.masks[self.names[i - 1]] = self.masks[name]
                 elif mode == "mha_conv":
                     size_weight = rgetattr(self, self.names[i - 1]).size()
                     feature_output, feature_input, kernel_size, _ = size_weight
-                    self.masks[name] = LearnableMaskMHA(int(feature_input), int(feature_output), int(kernel_size), int(feature_output)//embedded_dims)
+                    self.masks[name] = LearnableMaskMHA(int(feature_input), int(feature_output), int(kernel_size), int(feature_output)//embedded_dims, k=k)
                     self.masks[self.names[i - 1]] = self.masks[name]
                 elif mode == "mha_linear":
                     size_weight = rgetattr(self, self.names[i - 1]).size()
                     size_bias = size_weight[0]
                     if "out_proj.weight" in self.names[i - 1]:
-                        self.masks[name] = LearnableMaskMHALinear(size_weight, int(size_bias), int(size_bias//embedded_dims))
+                        self.masks[name] = LearnableMaskMHALinear(size_weight, int(size_bias), int(size_bias//embedded_dims), k=k)
                         self.masks["in_proj_weight"] = self.masks[name]
                         self.masks[self.names[i - 1]] = self.masks[name]
                         self.masks["in_proj_bias"] = self.masks[name]
@@ -388,6 +402,7 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
         self.mask_class_wrapper = True
         self.names = [name for name, _ in self.named_parameters()]
         self.init_masks()
+        self.training = True
 
     def reset_parameters_wrapper(self, *args, **kw):
         return super_class._reset_parameters(self, *args, **kw)
@@ -398,18 +413,32 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
             loss = loss + mask.get_loss()
         return loss
 
+    def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
+        mode_before = self.training
+        self.train()
+        res = super_class.state_dict(self, *args, destination=destination, prefix=prefix, keep_vars=keep_vars)
+        self.train(mode_before)
+        return res
+
     def train_wrapper(self, mode_train: bool = True, *args, **kw):
+        has_changed = self.training != mode_train
         super_class.train(self, mode=mode_train, *args, **kw)
-        if not mode_train:
+        if has_changed:# and False:
+            #print("eval called")
             with torch.no_grad():
                 for i, name in enumerate(self.names):
+                    #break
                     if name in self.masks:
                         weight_idx, bias_idx = 0, 1
                         if mode == "mha_linear":
                             weight_idx, bias_idx = (0, 1) if "in_proj" in name else (2, 3)
 
                         mask = self.masks[name].get_mask()[weight_idx] if "weight" in name else self.masks[name].get_mask()[bias_idx]
-                        mask = torch.where(mask < 0.001, 0.0, 1.0)
+                        if mode_train:
+                            mask = torch.where(mask < 0.0001, 0.0, 1.0/mask)
+                        else:
+                            mask = torch.where(mask < 0.0001, 0.0, mask)
+                        #mask = torch.where(mask < 0.0001, 0.0, mask)
                         param = rgetattr(self, name)
                         if param.size() != mask.size():
                             print("err")
@@ -417,6 +446,7 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
                             self.names.pop(i)
                             del mask
                         else:
+                            #pass
                             param.copy_(param * mask)
                         # remove_mask = torch.where(mask[:,] == 0.0, 1.0, 0.0)
 
@@ -440,10 +470,10 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
                     index < len(self.names) - 1 and "bias" in self.names[index + 1].split(".")[
                 -1]):
                 self.masks[name].update_permutation(rgetattr(self, name + "_"),
-                                                    torch.zeros((rgetattr(self, name + "_").size()[0])).cuda())
+                                                    torch.zeros((rgetattr(self, name + "_").size()[0])).to(self.masks[name].get_device()))
 
     def forward_wrapper(self, *args, **kw):
-        if self.training:
+        if self.training:# or True:
             # print("forward called")
             for i, name in enumerate(self.names):
                 if name in self.masks:
@@ -492,7 +522,8 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64):
         "initialize_permutation_if_empty": initialize_permutation_if_empty,
         "init_masks": init_masks,
         "delete_masks": delete_masks,
-        "reinit_masks": reinit_masks
+        "reinit_masks": reinit_masks,
+        "state_dict": state_dict
     })
 
 

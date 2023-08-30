@@ -346,21 +346,24 @@ class MixFFNPrunable(BaseModule):
         self.activate = build_activation_layer(act_cfg)
 
         in_channels = embed_dims
-        fc1 = MixFFN_Conv2d_pruned(
+        fc1 = IdentityConv2d(
             in_channels=in_channels,
             out_channels=feedforward_channels,
             kernel_size=1,
             stride=1,
-            bias=True)
+            bias=True,
+            conv_class=MixFFN_Conv2d_pruned)
+        ident = Identity(feedforward_channels, dim=1)
         # 3x3 depth wise conv to provide positional encode information
-        pe_conv = MixFFN_Conv2d_pruned(
+        pe_conv = IdentityConv2d(
             in_channels=feedforward_channels,
             out_channels=feedforward_channels,
             kernel_size=3,
             stride=1,
             padding=(3 - 1) // 2,
             bias=True,
-            groups=feedforward_channels)
+            groups=feedforward_channels,
+            conv_class=MixFFN_Conv2d_pruned)
         fc2 = IdentityConv2d(
             in_channels=feedforward_channels,
             out_channels=in_channels,
@@ -369,7 +372,7 @@ class MixFFNPrunable(BaseModule):
             bias=True,
             conv_class=MixFFN_Conv2d_pruned)
         drop = nn.Dropout(ffn_drop)
-        layers = [fc1, pe_conv, self.activate, drop, fc2, drop]
+        layers = [fc1, ident, pe_conv, self.activate, drop, fc2, drop]
         self.layers = Sequential(*layers)
         self.dropout_layer = build_dropout(
             dropout_layer) if dropout_layer else torch.nn.Identity()
@@ -509,11 +512,15 @@ class PatchEmbedPrunable(BaseModule):
 
 @MODELS.register_module()
 class MixVisionTransformerPrunable(MixVisionTransformer):
-    def __init__(self, embed_dims=64, *args, **kw):
+    def __init__(self, embed_dims=64, k=3, *args, **kw):
         global MultiheadAttention_pruned
-        MultiheadAttention_pruned = mask_class_wrapper(nn.MultiheadAttention, mode="mha_linear", embedded_dims=embed_dims)
+        MultiheadAttention_pruned = mask_class_wrapper(nn.MultiheadAttention, mode="mha_linear", embedded_dims=embed_dims, k=k)
         global PatchEmbed_Conv2d_pruned
-        PatchEmbed_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="mha_conv", embedded_dims=embed_dims)
+        PatchEmbed_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="mha_conv", embedded_dims=embed_dims, k=k)
+        global MixFFN_Conv2d_pruned
+        MixFFN_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv", k=k)
+        global EfficientMultiheadAttention_Conv2d_pruned
+        EfficientMultiheadAttention_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv", k=k)
         mit.MixFFN = MixFFNPrunable
         mit.PatchEmbed = PatchEmbedPrunable
         mit.EfficientMultiheadAttention = EfficientMultiheadAttentionPrunable

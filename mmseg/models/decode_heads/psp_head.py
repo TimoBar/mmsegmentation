@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import ConvModule
 
+from acosp.inject import UnprunableConv2d
 from mmseg.registry import MODELS
 from ..utils import resize
 from .decode_head import BaseDecodeHead

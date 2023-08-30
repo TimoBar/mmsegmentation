@@ -7,12 +7,21 @@ def set_identity_layer_mode(module, value):
             p.set_pruning_graph_mode(value)
 
 
+class EmptyModule(nn.Module):
+    def forward(self, *args, query=None, **kw):
+        if query is not None:
+            return [torch.zeros_like(query).to(query.device)]
+        return torch.zeros_like(args[0]).to(args[0].device)
+
+
 class Identity(nn.Module):
     def __init__(self, out_channels, dim=0):
         self.dim = dim
         super().__init__()
         self.identity_conv = nn.Conv2d(out_channels, out_channels, (1, 1), bias=False, padding=(0, 0))
         self.init_itentity_convs()
+        self.identity_conv.weight.requires_grad = False
+        self.identity_conv.requires_grad = False
         self.pruning_graph_mode = False
         self.non_zero_indexes = self.get_non_zero_feature_maps()
         self.out_channels = out_channels
@@ -25,11 +34,13 @@ class Identity(nn.Module):
     def set_pruning_graph_mode(self, value):
         self.pruning_graph_mode = value
         self.non_zero_indexes = self.get_non_zero_feature_maps()
+        self.identity_conv.weight.requires_grad = False
+        self.identity_conv.requires_grad = False
 
     def init_itentity_convs(self):
         out_f, in_f, kx, ky = self.identity_conv.weight.size()
         self.identity_conv.weight = torch.nn.Parameter(
-            torch.eye(out_f, in_f).cuda().expand(kx, ky, out_f, in_f).permute(2, 3, 0, 1), requires_grad=True)
+            torch.eye(out_f, in_f).to(self.identity_conv.weight.device).expand(kx, ky, out_f, in_f).permute(2, 3, 0, 1), requires_grad=False)
 
     def forward(self, x):
         if self.pruning_graph_mode:
@@ -37,7 +48,7 @@ class Identity(nn.Module):
         else:
             n, c, h, w = x.size()
             if self.dim == 0:
-                res = torch.zeros((n, self.out_channels, h, w)).cuda()
+                res = torch.zeros((n, self.out_channels, h, w)).to(self.identity_conv.weight.device)
                 res[:, self.non_zero_indexes, :, :] = res[:, self.non_zero_indexes, :, :] + x
             else:
                 res = x[:, self.non_zero_indexes, :, :]
@@ -68,6 +79,9 @@ class IdentityConv2d(Identity):
         else:
             out = self.conv(x)
             n, c, h, w = out.size()
-            res = torch.zeros((n, self.out_channels, h, w)).cuda()
-            res[:,self.non_zero_indexes, :, :] = res[:,self.non_zero_indexes, :, :] + out
+            if self.dim == 0:
+                res = torch.zeros((n, self.out_channels, h, w)).to(self.identity_conv.weight.device)
+                res[:,self.non_zero_indexes, :, :] = res[:,self.non_zero_indexes, :, :] + out
+            else:
+                res = out[:, self.non_zero_indexes, :, :]
             return res

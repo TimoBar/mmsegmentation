@@ -24,7 +24,7 @@ class AcospHook(Hook):
             final_sparsity=0.5,  # Final sparsity
         )
 
-    def before_run(self, runner) -> None:
+    def after_load_checkpoint(self, runner, checkpoint: dict) -> None:
         self.pruner.configure_model(runner.model.cuda())
 
     def after_train_iter(self,

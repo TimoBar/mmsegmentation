@@ -19,7 +19,7 @@
 ##NORMAL -----
 #SBATCH --partition=gpu,gpub
 #SBATCH --time=7-00:00:00
-##SBATCH --exclude=gpu[04,02]
+#SBATCH --exclude=gpu[01]
 
 module load comp/gcc/11.2.0
 module load anaconda

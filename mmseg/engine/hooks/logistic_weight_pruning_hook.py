@@ -10,9 +10,11 @@ from mmengine.hooks import Hook
 from mmengine.registry import HOOKS
 from torch.nn.modules.module import register_module_forward_pre_hook
 
+from mmseg.models.backbones.mit_prunable import EfficientMultiheadAttention_Conv2d_pruned, MixFFN_Conv2d_pruned
 from mmseg.models.utils import reduce_feature_dim, set_identity_layer_mode
+from mmseg.models.utils.identity_conv import EmptyModule
 from mmseg.models.utils.mask_wrapper import LearnableMask, LearnableKernelMask, LearnableMaskLinear, \
-    LearnableMaskConv2d, rgetattr, LearnableMaskMHA
+    LearnableMaskConv2d, rgetattr, LearnableMaskMHA, rsetattr
 import logging
 from mmengine.logging import print_log
 import torch_pruning as tp
@@ -30,7 +32,7 @@ class LogisticWeightPruningHook(Hook):
     """
     """
     priority = 'LOW'
-    def __init__(self, do_logging=True, do_explicit_pruning=True, logging_interval=100, pruning_interval=25):
+    def __init__(self, do_logging=True, do_explicit_pruning=True, logging_interval=100, pruning_interval=25, debug=False):
         self.logging_interval = logging_interval
         self.pruning_interval = pruning_interval
         self.logging = do_logging
@@ -39,6 +41,7 @@ class LogisticWeightPruningHook(Hook):
         self.num_weights_total_first = -1
         self.model_sizes_org = {}
         self.history = []
+        self.debug = debug
 
     def find_last_history(self, path):
         save_file = osp.join(path, 'last_history')
@@ -53,6 +56,7 @@ class LogisticWeightPruningHook(Hook):
 
         result['ori_shape'] = input_shape[-2:]
         result['pad_shape'] = input_shape[-2:]
+        result['img_shape'] = input_shape[-2:]
         data_batch = {
             'inputs': [torch.rand(input_shape)],
             'data_samples': [SegDataSample(metainfo=result)]
@@ -97,10 +101,10 @@ class LogisticWeightPruningHook(Hook):
             if isinstance(p, LearnableKernelMask):
                 pass
             elif isinstance(p, LearnableMask):
-
                 structures_per_pruned_instance = p.non_pruning_size
                 max_structures = p.pruning_size
                 self.model_sizes_org[n] = (structures_per_pruned_instance, max_structures)
+
 
     def print_pruning_stats(self, model):
         num_weights_pruned_total = 0
@@ -157,7 +161,8 @@ class LogisticWeightPruningHook(Hook):
                   logger='current',
                   level=logging.INFO)
 
-    def prune_weight(self, model, data_batch):
+    def prune_weight(self, model):
+        data_batch = model.module.data_preprocessor(self.get_data_batch((3, 512, 512)))
         set_identity_layer_mode(model, True)
         def _forward_func(self, data):
             return self.test_step(data)
@@ -182,9 +187,12 @@ class LogisticWeightPruningHook(Hook):
                                                                                torch.nn.MultiheadAttention)) and isinstance(
                     list(module.masks.values())[0], LearnableMaskLinear))):
 
+                    #if self.debug and ("decode_head.convs" in module_name):
+                    #    print(f"Skipped module {module_name}")
+                    #    continue
                     mask_bias_soft = list(module.masks.values())[0].get_mask()[-1]
 
-                    mask_bias = torch.where(mask_bias_soft < 0.0001, 1, 0)
+                    mask_bias = torch.where(mask_bias_soft < 0.001, 1, 0)
                     remove_indexes = mask_bias.nonzero(as_tuple=True)[0].tolist()
 
                     if len(remove_indexes) > 0:
@@ -199,8 +207,19 @@ class LogisticWeightPruningHook(Hook):
                         else:
                             tp_type = tp.prune_multihead_attention_out_channels
 
+                        if self.debug and len(remove_indexes) >= list(module.masks.values())[0].pruning_size:
+                            print(f"remove completely {module_name} by Empty")
+                            rsetattr(model, module_name, EmptyModule())
+                            data_batch = model.module.data_preprocessor(self.get_data_batch((3, 512, 512)))
+                            self.history.append(f"delete {module_name}")
+                            DG = tp.DependencyGraph().build_dependency(model, example_inputs=data_batch,
+                                                                       forward_fn=_forward_func,
+                                                                       output_transform=_output_transform)
+                            continue
+
                         group = DG.get_pruning_group(mo, tp_type, idxs=remove_indexes)
                         if not DG.check_pruning_group(group):
+
                             mask_object = list(module.masks.values())[0]
                             with torch.no_grad():
                                 mask_object.p1.copy_(mask_object.p1 - 1 / mask_object.factor)
@@ -216,9 +235,9 @@ class LogisticWeightPruningHook(Hook):
 
                             group.prune()
 
-                            for module_name, module in model.named_modules():
-                                if getattr(module, "mask_class_wrapper", False):
-                                    module.reinit_masks()
+                            for name, m in model.named_modules():
+                                if getattr(m, "mask_class_wrapper", False):
+                                    m.reinit_masks()
 
                             # model.eval()
                             with torch.no_grad():
@@ -232,6 +251,7 @@ class LogisticWeightPruningHook(Hook):
                         else:
                             pass
                             # print("Cant prune this layer")
+
         self.history.extend(DG.pruning_history())
         set_identity_layer_mode(model, False)
         self.remove_total += num_removed
@@ -259,10 +279,15 @@ class LogisticWeightPruningHook(Hook):
             pytorch_total_params = sum(p.numel() for p in runner.model.parameters() if p.requires_grad)
             self.num_weights_total_first = pytorch_total_params
             self.init_model_stats(runner.model)
+            print_log("\n_____________________________\n"
+                      f"Total weights of model {self.num_weights_total_first}"
+                      "\n_____________________________\n",
+                      logger='current',
+                      level=logging.INFO)
 
         if self.do_explicit_pruning and (
                 self.every_n_train_iters(runner, self.pruning_interval) or self.is_last_train_iter(runner)):
-            self.prune_weight(runner.model, data_batch)
+            self.prune_weight(runner.model)
 
         if self.logging and (
                 self.every_n_train_iters(runner, self.logging_interval) or self.is_last_train_iter(runner)):

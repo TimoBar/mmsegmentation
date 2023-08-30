@@ -5,9 +5,8 @@ import logging
 import os
 import os.path as osp
 from mmengine.config import Config, DictAction
-
-
-
+from mmengine.runner import find_latest_checkpoint
+from torch import autograd
 
 """
 Since I have to overwrite the classes used in the models, the order of the import is important
@@ -73,10 +72,51 @@ def parse_args():
         default=False,
         help='resume from the latest checkpoint in the work_dir automatically')
     parser.add_argument(
+        '--load-from',
+        type=str,
+        default=None,
+        help='Checkpoint to load init weights')
+    parser.add_argument(
         '--amp',
         action='store_true',
         default=False,
         help='enable automatic-mixed-precision training')
+    parser.add_argument(
+        '--pruning-interval',
+        type=int,
+        default=5000,
+        help='interval of hard pruning of model weights')
+    parser.add_argument(
+        '--pruning-logging-interval',
+        type=int,
+        default=5000,
+        help='interval of logging of soft pruning of model weights')
+    parser.add_argument(
+        '--with-flops',
+        action='store_true',
+        default=False,
+        help='if flops should be measured during training')
+    parser.add_argument(
+        '--with-fps',
+        action='store_true',
+        default=False,
+        help='if fps should be measured during training')
+    parser.add_argument(
+        '--flops-interval',
+        type=int,
+        default=5000,
+        help='interval of measuring flops of model')
+    parser.add_argument(
+        '--flops-input-size',
+        type=int,
+        nargs='+',
+        default=[2048, 1024],
+        help='the shape of the input that is used to compute the flops')
+    parser.add_argument(
+        '--fps-interval',
+        type=int,
+        default=5000,
+        help='interval of measuring fps of model')
     parser.add_argument(
         '--explicit-pruning',
         action='store_true',
@@ -166,13 +206,30 @@ def main():
     # resume training
     cfg.resume = args.resume
 
+    if args.load_from is not None:
+        resume_from = None
+        if args.resume:
+            resume_from = find_latest_checkpoint(cfg.work_dir)
+
+        if resume_from is None:
+            cfg.load_from = args.load_from
+            cfg.resume = False
+
+    hooks = []
     if args.pruning_mode == "acosp":
-        cfg["custom_hooks"] = [dict(type='AcospHook', interval=2975, max_iters=cfg.train_cfg.max_iters)]
+        hooks.append(dict(type='AcospHook', interval=185, max_iters=cfg.train_cfg.max_iters))
     elif args.pruning_mode == "logistic" or args.pruning_mode == "logistic_kernel" or args.pruning_mode == "segformer":
-        pruning_hook = dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, logging_interval=5000, pruning_interval=5000)
-        fps_hook = dict(type='FPSMeasureHook', interval=5000)
-        flops_hook = dict(type='FLOPSMeasureHook', interval=5000, input_shape=(2048,1024))
-        cfg["custom_hooks"] = [pruning_hook, fps_hook, flops_hook]
+        hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, logging_interval=args.pruning_logging_interval, pruning_interval=args.pruning_interval))
+
+    if args.with_fps:
+        hooks.append(dict(type='FPSMeasureHook', interval=args.fps_interval))
+
+    if args.with_flops:
+        if len(args.flops_input_size) != 2:
+            raise Exception(f"You have to give exact 2 numbers for the argument --flops-input-size, but {len(args.flops_input_size)} were given")
+        hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=args.flops_interval, input_shape=tuple(args.flops_input_size)))
+
+    cfg["custom_hooks"] = hooks
 
     # build the runner from config
     if 'runner_type' not in cfg:
@@ -183,8 +240,7 @@ def main():
         # if 'runner_type' is set in the cfg
         runner = RUNNERS.build(cfg)
 
-
-
+    #torch.autograd.set_detect_anomaly(True)
     # start training
     runner.train()
 

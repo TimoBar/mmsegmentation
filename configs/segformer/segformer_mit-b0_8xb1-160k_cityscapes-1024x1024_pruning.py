@@ -23,7 +23,8 @@ optim_wrapper = dict(
             'pos_block': dict(decay_mult=0.),
             'norm': dict(decay_mult=0.),
             'head': dict(lr_mult=10.),
-            'p1': dict(lr_mult=10.)
+            'p1': dict(lr_mult=10.),
+            'identity_conv': dict(decay_mult=0.)
         }))
 
 param_scheduler = [

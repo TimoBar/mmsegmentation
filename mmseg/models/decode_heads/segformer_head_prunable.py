@@ -1,10 +1,11 @@
 import torch
-from mmcv.cnn import ConvModule
+from mmcv.cnn.bricks.conv_module import ConvModule
 from torch import nn
 
 from .decode_head import BaseDecodeHead
 from ..utils import mask_class_wrapper, resize
 from ...registry import MODELS
+
 
 SegformerHead_Conv2d_pruned = mask_class_wrapper(ConvModule, mode="conv")
 @MODELS.register_module()
@@ -19,8 +20,10 @@ class SegformerHeadPrunable(BaseDecodeHead):
             Default: 'bilinear'.
     """
 
-    def __init__(self, interpolate_mode='bilinear', **kwargs):
+    def __init__(self, interpolate_mode='bilinear', k=3, **kwargs):
         super().__init__(input_transform='multiple_select', **kwargs)
+        global SegformerHead_Conv2d_pruned
+        SegformerHead_Conv2d_pruned = mask_class_wrapper(ConvModule, mode="conv", k=k)
 
         self.interpolate_mode = interpolate_mode
         num_inputs = len(self.in_channels)
@@ -51,6 +54,9 @@ class SegformerHeadPrunable(BaseDecodeHead):
         for idx in range(len(inputs)):
             x = inputs[idx]
             conv = self.convs[idx]
+            #ident = self.identities[idx]
+            #print(conv)
+            #print(x)
             outs.append(
                 resize(
                     input=conv(x),
