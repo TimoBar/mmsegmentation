@@ -9,7 +9,7 @@
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 
-#SBATCH --job-name=train
+#SBATCH --job-name=DynaSegFormer
 #SBATCH --output=log/%j.out
 
 ##DEBUG -----
@@ -17,7 +17,7 @@
 ##SBATCH --time=00:20:00
 
 ##NORMAL -----
-#SBATCH --partition=gpu,gpub
+#SBATCH --partition=gpu
 #SBATCH --time=7-00:00:00
 ##SBATCH --exclude=gpu[04,02]
 

@@ -12,6 +12,14 @@ from torch.nn.init import xavier_uniform_, constant_, xavier_normal_
 from torch.nn.modules.linear import NonDynamicallyQuantizableLinear
 
 
+def get_dgl_layer_loss(model):
+    sum_loss = 0
+    for module_name, module in model.named_modules():
+        if isinstance(module, DGLLayer):
+            sum_loss = module.get_loss() + sum_loss
+    return sum_loss
+
+
 class MLP(nn.Module):
     def __init__(self, input_features, output_features):
         super(MLP, self).__init__()
@@ -35,10 +43,14 @@ class DGLLayer(nn.Module):
         self.layer_norm = nn.LayerNorm(in_features)
         self.top_k = int(out_features * top_r)
         self.gate_predictor = MLP(out_features, out_features)
+        self.loss = 0
 
     def set_topr(self, top_r):
         assert 0.0 <= top_r <= 1.0, f"the topr value must be between 0 and 1, but got {top_r}"
         self.top_k = int(self.out_features * top_r)
+
+    def get_loss(self):
+        return self.loss
 
     def forward(self, x, l_w, l_b=None):
         is_batched = x.dim() == 3
@@ -56,6 +68,7 @@ class DGLLayer(nn.Module):
 
         gate_predictor_input = torch.nn.functional.linear(x_norm, l_w, l_b)
         gate_predictor_logits = self.gate_predictor(gate_predictor_input)
+        self.loss = torch.sum(torch.abs(gate_predictor_logits))
 
         mask = torch.zeros((n, self.out_features), device=x.get_device())
         output = torch.zeros((n, self.out_features, l), device=x.get_device())
@@ -65,9 +78,10 @@ class DGLLayer(nn.Module):
             mask[i_n, indices[i_n]] = 1
             w_list.append(l_w[indices[i_n], :])
         w = torch.stack(w_list)
-        w = w.permute(0, 2, 1).unsqueeze(1)
-        x_p = x.unsqueeze(2)
-        output_not_null = torch.matmul(x_p, w).squeeze(2).permute(0, 2, 1)
+        bz, out_features, in_features = w.shape
+        w = w.reshape(bz * out_features, in_features, 1, 1)
+        x_p = x.permute(0, 2, 1).reshape(1, n * c, 1, l)
+        output_not_null = torch.nn.functional.conv2d(x_p, w, groups=bz).reshape(bz, out_features, l).permute(0, 1, 2)
 
         bias = l_b.unsqueeze(1).repeat(1, l)
         for i_n in range(0, n):
@@ -131,7 +145,7 @@ class DynamicGatedMultiheadAttention(nn.Module):
                 key: Tensor,
                 value: Tensor,
                 average_attn_weights=True) -> Tuple[Tensor, Optional[Tensor]]:
-        #print(key.size(), query.dim(), self.batch_first)
+        # print(key.size(), query.dim(), self.batch_first)
         is_batched = query.dim() == 3
         if self.batch_first and is_batched:
             # make sure that the transpose op does not affect the "is" property
@@ -161,7 +175,7 @@ class DynamicGatedMultiheadAttention(nn.Module):
         q, k, v = self._inweight_projection(query, key, value, self.in_proj_weight, self.in_proj_bias)
 
         q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        #print(k.size(), k.shape[0], bsz, self.num_heads, self.head_dim)
+        # print(k.size(), k.shape[0], bsz, self.num_heads, self.head_dim)
         k = k.view(k.shape[0], bsz * self.num_heads, self.head_dim).transpose(0, 1)
         v = v.view(v.shape[0], bsz * self.num_heads, self.head_dim).transpose(0, 1)
         src_len = k.size(1)

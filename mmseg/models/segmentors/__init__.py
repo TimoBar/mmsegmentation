@@ -6,8 +6,9 @@ from .seg_tta import SegTTAModel
 from .zegclip import ZegCLIP
 from .vss_encoder_decoder import VSSEncoderDecoder
 from .encoder_decoder_structured_pruned import PrunedEncoderDecoder
+from .encoder_decoder_dynasegformer import EncoderDecoderDynaSegFormer
 
 __all__ = [
     'BaseSegmentor', 'EncoderDecoder', 'CascadeEncoderDecoder', 'SegTTAModel', 'ZegCLIP', 'VSSEncoderDecoder',
-    'PrunedEncoderDecoder'
+    'PrunedEncoderDecoder', 'EncoderDecoderDynaSegFormer'
 ]
