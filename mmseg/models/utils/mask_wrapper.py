@@ -9,18 +9,21 @@ import torch
 from torch import optim
 
 
-
+sigmoid = nn.Sigmoid()
 def logistic_function(x, k, b, epsilon=5e-5):
     # print(f"x: {x}, k: {k}, b: {b}, x-b: {x-b}, -k*(x-b): {-k * (x - b)}")
     #print(x.device, b.device)
-    e = torch.clip(-k * (x - b), max=10.0)
+
+    #return sigmoid(k * (x - b))
+
+    e = torch.clip(-k * (x - b), max=10.0, min=-10.0)
     res = 1 / (1 + torch.exp(e))
     res[res != torch.clamp(res, epsilon)] = 0
     return res
 
 
 def get_index_matrix(rows, colums, device="cuda"):
-    arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).to(device)
+    arr = torch.zeros((rows, colums), requires_grad=False, device=device, dtype=torch.float)
     for i in range(rows):
         arr[i] = i
     return arr
@@ -66,7 +69,7 @@ class LearnableMaskLinear(LearnableMask):
         else:
             self.non_pruning_size = self.size_together[1]
 
-        self.register_buffer("permutation", torch.zeros(self.pruning_size).int().to(self.get_device()))
+        self.register_buffer("permutation", torch.zeros(self.pruning_size, device=self.get_device()).int())
 
     def get_device(self):
         return self.p1.device
@@ -118,10 +121,10 @@ class LearnableMaskLinear(LearnableMask):
     def get_loss(self):
         # return 1/(torch.min(self.p1, torch.tensor([self.pruning_size])) + 5) - 0.001 * self.p1 * self.p1
         # return 1/(torch.min(self.p1, torch.tensor([self.pruning_size])) + 5) - 0.001 * self.p1 * self.p1
-        return - torch.min(self.p1, torch.tensor([self.non_pruning_size + 5]).to(self.get_device()))
+        return - torch.min(self.p1, torch.tensor([(self.pruning_size + 5) / self.factor], device=self.get_device()))
 
     def get_mask(self):
-        mask = get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size]).to(self.get_device())),
+        mask = get_weighting_matrix(torch.min(self.p1 * self.factor, torch.tensor([self.pruning_size], device=self.get_device())),
                                     self.pruning_size, self.non_pruning_size, k=self.k, device=self.get_device())[self.permutation]
         mask_weight = mask[:, 0:-1]
         mask_bias = mask[:, -1]
@@ -228,7 +231,7 @@ class LearnableKernelMask(LearnableMask):
 
     def get_index_matrix(self, rows, colums):
         if rows % 2 == 1:
-            arr = torch.zeros((rows, colums), requires_grad=False).to(torch.float).to(self.get_device())
+            arr = torch.zeros((rows, colums), requires_grad=False, device=self.get_device()).to(torch.float)
             for i in range(rows):
                 arr[i] = (rows // 2 - abs(rows // 2 - i)) * 2
             for i in range(rows - rows // 2 - 1):
@@ -470,11 +473,13 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64, k=3):
                     index < len(self.names) - 1 and "bias" in self.names[index + 1].split(".")[
                 -1]):
                 self.masks[name].update_permutation(rgetattr(self, name + "_"),
-                                                    torch.zeros((rgetattr(self, name + "_").size()[0])).to(self.masks[name].get_device()))
+                                                    torch.zeros((rgetattr(self, name + "_").size()[0]), device=self.masks[name].get_device()))
 
     def forward_wrapper(self, *args, **kw):
         if self.training:# or True:
             # print("forward called")
+            last_mask_obj = None
+            last_mask = None
             for i, name in enumerate(self.names):
                 if name in self.masks:
                     # rename parameter
@@ -487,7 +492,15 @@ def mask_class_wrapper(super_class, mode="linear", embedded_dims=64, k=3):
                     weight_idx, bias_idx = 0, 1
                     if mode == "mha_linear":
                         weight_idx, bias_idx = (0, 1) if "in_proj" in name else (2, 3)
-                    mask = self.masks[name].get_mask()[weight_idx] if "weight" in name else self.masks[name].get_mask()[bias_idx]
+
+                    if self.masks[name] == last_mask_obj:
+                        current_mask = last_mask
+                    else:
+                        current_mask = self.masks[name].get_mask()
+                    mask = current_mask[weight_idx] if "weight" in name else current_mask[bias_idx]
+                    last_mask_obj = self.masks[name]
+                    last_mask = current_mask
+                    #mask = self.masks[name].get_mask()[weight_idx] if "weight" in name else self.masks[name].get_mask()[bias_idx]
 
                     # create mask parameter with original name
                     rsetattr(self, name, rgetattr(self, name + "_") * mask)

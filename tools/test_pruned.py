@@ -6,7 +6,7 @@ import os.path as osp
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 
-from mmseg.engine.hooks import LogisticWeightPruningHook, FLOPSMeasureHook
+from mmseg.engine.hooks import LogisticWeightPruningHook, FLOPSMeasureHook, FPSMeasureHook, AcospHook
 
 
 # TODO: support fuse_conv_bn, visualization, and format_only
@@ -79,8 +79,14 @@ def trigger_visualization_hook(cfg, args):
             '"visualization=dict(type=\'VisualizationHook\')"')
 
     return cfg
+def print_fps(runner):
+    for hook in runner._hooks:
+        if isinstance(hook, FPSMeasureHook):
+            hook.before_train(runner)
 def soft2hard_prunung(runner):
     for hook in runner._hooks:
+        if isinstance(hook, AcospHook):
+            hook.inject.soft_to_hard_k(runner.model)
         if isinstance(hook, LogisticWeightPruningHook):
             pytorch_total_params = sum(p.numel() for p in runner.model.parameters() if p.requires_grad)
             hook.num_weights_total_first = pytorch_total_params
@@ -114,6 +120,7 @@ def runner_test(runner):
             'method. Please provide `test_dataloader`, `test_cfg` and '
             '`test_evaluator` arguments when initializing runner.')
 
+    #print_fps(runner)
     runner._test_loop = runner.build_test_loop(runner._test_loop)  # type: ignore
 
     runner.call_hook('before_run')
@@ -122,6 +129,7 @@ def runner_test(runner):
     runner.load_or_resume()
 
     soft2hard_prunung(runner)
+    #print_fps(runner)
 
     metrics = test_loop_run(runner.test_loop)  # type: ignore
     runner.call_hook('after_run')
@@ -161,10 +169,13 @@ def main():
         cfg.test_evaluator['keep_results'] = True
 
     hooks = []
+    cfg.model.backbone.pretrained = None
+    cfg.model.pretrained = None
     hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=True,
                       logging_interval=5000, pruning_interval=5000, debug=True))
     hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
                       input_shape=(2048, 1024)))
+    hooks.append(dict(type='FPSMeasureHook', interval=5000))
     cfg["custom_hooks"] = hooks
 
     cfg.model.backbone.k = 7

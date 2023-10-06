@@ -16,6 +16,7 @@ from .conv_lstm import ConvLSTM
 from .mask_wrapper import mask_class_wrapper, get_p1_loss, get_p1_values, get_num_pruned
 from .remove_feature_maps import reduce_feature_dim
 from .identity_conv import Identity, IdentityConv2d, set_identity_layer_mode
+from .dynamic_gated_linear_layer import DynamicGatedConv2d, DynamicGatedMultiheadAttention
 
 __all__ = [
     'ResLayer', 'SelfAttentionBlock', 'make_divisible', 'InvertedResidual',
@@ -23,5 +24,5 @@ __all__ = [
     'nchw_to_nlc', 'nlc_to_nchw', 'nchw2nlc2nchw', 'nlc2nchw2nlc', 'Encoding',
     'Upsample', 'resize', 'DAPPM', 'PAPPM', 'BasicBlock', 'Bottleneck', 'ConvLSTM',
     'mask_class_wrapper', 'get_p1_loss', 'get_p1_values', 'get_num_pruned', 'reduce_feature_dim',
-    'Identity', 'IdentityConv2d', 'set_identity_layer_mode'
+    'Identity', 'IdentityConv2d', 'set_identity_layer_mode', 'DynamicGatedConv2d', 'DynamicGatedMultiheadAttention'
 ]

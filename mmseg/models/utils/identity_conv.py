@@ -1,17 +1,22 @@
 from torch import nn
 import torch
 
+
+"""def turn_on_identity_layer(module):
+    for n, p in module.named_modules():
+        if isinstance(p, Identity):
+            p.turn_on = True"""
 def set_identity_layer_mode(module, value):
+    #turn_on_identity_layer(module)
     for n, p in module.named_modules():
         if isinstance(p, Identity):
             p.set_pruning_graph_mode(value)
 
-
 class EmptyModule(nn.Module):
     def forward(self, *args, query=None, **kw):
         if query is not None:
-            return [torch.zeros_like(query).to(query.device)]
-        return torch.zeros_like(args[0]).to(args[0].device)
+            return [torch.zeros_like(query, device=query.device)]
+        return torch.zeros_like(args[0], device=args[0].device)
 
 
 class Identity(nn.Module):
@@ -48,7 +53,7 @@ class Identity(nn.Module):
         else:
             n, c, h, w = x.size()
             if self.dim == 0:
-                res = torch.zeros((n, self.out_channels, h, w)).to(self.identity_conv.weight.device)
+                res = torch.zeros((n, self.out_channels, h, w), device=self.identity_conv.weight.device)
                 res[:, self.non_zero_indexes, :, :] = res[:, self.non_zero_indexes, :, :] + x
             else:
                 res = x[:, self.non_zero_indexes, :, :]
@@ -80,7 +85,7 @@ class IdentityConv2d(Identity):
             out = self.conv(x)
             n, c, h, w = out.size()
             if self.dim == 0:
-                res = torch.zeros((n, self.out_channels, h, w)).to(self.identity_conv.weight.device)
+                res = torch.zeros((n, self.out_channels, h, w), device=self.identity_conv.weight.device)
                 res[:,self.non_zero_indexes, :, :] = res[:,self.non_zero_indexes, :, :] + out
             else:
                 res = out[:, self.non_zero_indexes, :, :]

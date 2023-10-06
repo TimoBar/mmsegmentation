@@ -8,6 +8,8 @@ from mmengine.config import Config, DictAction
 from mmengine.runner import find_latest_checkpoint
 from torch import autograd
 
+from tools.test_pruned import soft2hard_prunung
+
 """
 Since I have to overwrite the classes used in the models, the order of the import is important
 """
@@ -123,6 +125,11 @@ def parse_args():
         default=False,
         help='Prunes the weight not just by setting them to zero, but by removing the corresponding row out of the parameter tensor')
     parser.add_argument(
+        '--prune-at-start',
+        action='store_true',
+        default=False,
+        help='when true the model is pruned in first training iteration')
+    parser.add_argument(
         '--pruning-mode',
         default="logistic",
         help='Pruning method: Can be "static", "logistic"')
@@ -154,6 +161,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if not args.explicit_pruning:
+        torch.backends.cudnn.benchmark = True
 
     if args.pruning_mode == "logistic":
         overwrite_classes_logistic_pruning()
@@ -219,7 +228,7 @@ def main():
     if args.pruning_mode == "acosp":
         hooks.append(dict(type='AcospHook', interval=185, max_iters=cfg.train_cfg.max_iters))
     elif args.pruning_mode == "logistic" or args.pruning_mode == "logistic_kernel" or args.pruning_mode == "segformer":
-        hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, logging_interval=args.pruning_logging_interval, pruning_interval=args.pruning_interval))
+        hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, prune_at_start=args.prune_at_start, logging_interval=args.pruning_logging_interval, pruning_interval=args.pruning_interval, debug=True))
 
     if args.with_fps:
         hooks.append(dict(type='FPSMeasureHook', interval=args.fps_interval))

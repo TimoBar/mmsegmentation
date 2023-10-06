@@ -32,7 +32,7 @@ class LogisticWeightPruningHook(Hook):
     """
     """
     priority = 'LOW'
-    def __init__(self, do_logging=True, do_explicit_pruning=True, logging_interval=100, pruning_interval=25, debug=False):
+    def __init__(self, do_logging=True, do_explicit_pruning=True, logging_interval=100, pruning_interval=25, debug=False, prune_at_start=False):
         self.logging_interval = logging_interval
         self.pruning_interval = pruning_interval
         self.logging = do_logging
@@ -42,6 +42,7 @@ class LogisticWeightPruningHook(Hook):
         self.model_sizes_org = {}
         self.history = []
         self.debug = debug
+        self.prune_at_start = prune_at_start
 
     def find_last_history(self, path):
         save_file = osp.join(path, 'last_history')
@@ -228,6 +229,7 @@ class LogisticWeightPruningHook(Hook):
                             group = DG.get_pruning_group(mo, tp_type, idxs=remove_indexes)
                         # print(group)
                         if DG.check_pruning_group(group) and len(remove_indexes) > 0:
+                            #print("module_name: ", module_name)
                             num_removed += len(remove_indexes)
                             model.eval()
                             #with torch.no_grad():
@@ -285,8 +287,8 @@ class LogisticWeightPruningHook(Hook):
                       logger='current',
                       level=logging.INFO)
 
-        if self.do_explicit_pruning and (
-                self.every_n_train_iters(runner, self.pruning_interval) or self.is_last_train_iter(runner)):
+        if (self.prune_at_start and runner.iter == 50) or (self.do_explicit_pruning and (
+                self.every_n_train_iters(runner, self.pruning_interval) or self.is_last_train_iter(runner))):
             self.prune_weight(runner.model)
 
         if self.logging and (

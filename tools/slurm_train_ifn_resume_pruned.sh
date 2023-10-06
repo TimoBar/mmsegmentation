@@ -17,7 +17,8 @@
 ##SBATCH --time=00:20:00
 
 ##NORMAL -----
-#SBATCH --partition=gpu,gpub
+##SBATCH --partition=gpu,gpub
+#SBATCH --partition=gpub
 #SBATCH --time=7-00:00:00
 #SBATCH --exclude=gpu[01]
 
