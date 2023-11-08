@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmseg.registry import DATASETS
+from .cityscapes import CityscapesDataset
 from .basesegdataset import BaseSegDataset
 
 
@@ -63,6 +64,7 @@ class MapillaryDataset_v1(BaseSegDataset):
                  **kwargs) -> None:
         super().__init__(
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
 
 
 @DATASETS.register_module()
@@ -174,3 +176,13 @@ class MapillaryDataset_v2(BaseSegDataset):
                  **kwargs) -> None:
         super().__init__(
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
+
+@DATASETS.register_module()
+class MapillaryDatasetCS(CityscapesDataset):
+
+    def __init__(self, **kwargs):
+        super(MapillaryDatasetCS, self).__init__(
+            img_suffix='.jpg',
+            seg_map_suffix='.png',
+            **kwargs)

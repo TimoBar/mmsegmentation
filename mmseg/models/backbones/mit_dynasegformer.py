@@ -44,7 +44,8 @@ class MixFFNDynaSegFormer(BaseModule):
                  act_cfg=dict(type='GELU'),
                  ffn_drop=0.,
                  dropout_layer=None,
-                 init_cfg=None):
+                 init_cfg=None,
+                 mix_ffn_dgl=False):
         super().__init__(init_cfg)
         from mmcv.cnn import Conv2d
 
@@ -54,7 +55,7 @@ class MixFFNDynaSegFormer(BaseModule):
         self.activate = build_activation_layer(act_cfg)
 
         in_channels = embed_dims
-        fc1 = DynamicGatedConv2d(
+        fc1 = Conv2d(
             in_channels=in_channels,
             out_channels=feedforward_channels,
             kernel_size=1,
@@ -69,7 +70,8 @@ class MixFFNDynaSegFormer(BaseModule):
             padding=(3 - 1) // 2,
             bias=True,
             groups=feedforward_channels)
-        fc2 = DynamicGatedConv2d(
+        fc2_conv_type = DynamicGatedConv2d if mix_ffn_dgl else Conv2d
+        fc2 = fc2_conv_type(
             in_channels=feedforward_channels,
             out_channels=in_channels,
             kernel_size=1,
@@ -400,7 +402,8 @@ class TransformerEncoderLayerDynaSegFormer(BaseModule):
                  norm_cfg=dict(type='LN'),
                  batch_first=True,
                  sr_ratio=1,
-                 with_cp=False):
+                 with_cp=False,
+                 mix_ffn_dgl=False):
         super().__init__()
 
         # The ret[0] of build_norm_layer is norm name.
@@ -425,7 +428,8 @@ class TransformerEncoderLayerDynaSegFormer(BaseModule):
             feedforward_channels=feedforward_channels,
             ffn_drop=drop_rate,
             dropout_layer=dict(type='DropPath', drop_prob=drop_path_rate),
-            act_cfg=act_cfg)
+            act_cfg=act_cfg,
+            mix_ffn_dgl=mix_ffn_dgl)
 
         self.with_cp = with_cp
 
@@ -504,7 +508,8 @@ class MixVisionTransformerDynaSegFormer(BaseModule):
                  norm_cfg=dict(type='LN', eps=1e-6),
                  pretrained=None,
                  init_cfg=None,
-                 with_cp=False):
+                 with_cp=False,
+                 mix_ffn_dgl=False):
         super().__init__(init_cfg=init_cfg)
 
         assert not (init_cfg and pretrained), \
@@ -559,7 +564,8 @@ class MixVisionTransformerDynaSegFormer(BaseModule):
                     act_cfg=act_cfg,
                     norm_cfg=norm_cfg,
                     with_cp=with_cp,
-                    sr_ratio=sr_ratios[i]) for idx in range(num_layer)
+                    sr_ratio=sr_ratios[i],
+                    mix_ffn_dgl=mix_ffn_dgl) for idx in range(num_layer)
             ])
             in_channels = embed_dims_i
             # The ret[0] of build_norm_layer is norm name.

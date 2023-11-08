@@ -12,7 +12,7 @@ from torch.nn.modules.module import register_module_forward_pre_hook
 
 from mmseg.models.backbones.mit_prunable import EfficientMultiheadAttention_Conv2d_pruned, MixFFN_Conv2d_pruned
 from mmseg.models.utils import reduce_feature_dim, set_identity_layer_mode
-from mmseg.models.utils.identity_conv import EmptyModule
+from mmseg.models.utils.identity_conv import EmptyModule, DummyModule
 from mmseg.models.utils.mask_wrapper import LearnableMask, LearnableKernelMask, LearnableMaskLinear, \
     LearnableMaskConv2d, rgetattr, LearnableMaskMHA, rsetattr
 import logging
@@ -29,7 +29,7 @@ DATA_BATCH = Optional[Union[dict, tuple, list]]
 
 
 @HOOKS.register_module()
-class LogisticWeightPruningHook(Hook):
+class LogisticWeightPruningHook2(Hook):
     """
     """
     priority = 'LOW'
@@ -113,37 +113,7 @@ class LogisticWeightPruningHook(Hook):
         num_weights_pruned_total = 0
         num_weights_total = 0
         for n, p in model.named_modules():
-            if isinstance(p, LearnableKernelMask):
-                p1 = torch.min(torch.max(torch.zeros_like(p.p1).int(), (p.p1 * p.factor).int()),
-                               torch.ones_like(p.p1) * p.kernel_size)
-                p1_x = p1[0:p1.size(0) // 2]
-                p1_y = p1[p1.size(0) // 2:]
-                his = torch.histogramdd(torch.stack([p1_x, p1_y]).permute(1, 0).cpu(),
-                                        bins=[p.kernel_size + 1, p.kernel_size + 1],
-                                        range=[0, p.kernel_size, 0, p.kernel_size])
-
-                num_pruned_completely = int(torch.sum(his.hist[-1, :]) + torch.sum(his.hist[0:-1, -1]))
-                num_weights = p.input_features * p.output_features * p.kernel_size * p.kernel_size
-                num_weights_total += num_weights
-
-                sizes = {}
-                for i in range(p.output_features):
-                    kernel_size = int((p.kernel_size - p1_x[i]) * (p.kernel_size - p1_y[i]))
-                    sizes[kernel_size] = (sizes[kernel_size] + 1) if kernel_size in sizes else 1
-                # print(sizes)
-                num_weights_not_pruned = 0
-                for kernel_size, num in sizes.items():
-                    num_weights_not_pruned += p.input_features * float(kernel_size) * num
-
-                num_weights_pruned = num_weights - int(num_weights_not_pruned)
-                num_weights_pruned_total += num_weights_pruned
-                print_log(f"{n}: Kernels:\n{his.hist[0:-1, 0:-1]}\n "
-                          f"Num removed kernels {num_pruned_completely}, "
-                          f"Num weights pruned {num_weights_pruned}/{num_weights} ({100.0 * num_weights_pruned / num_weights}%)",
-                          logger='current',
-                          level=logging.INFO)
-
-            elif isinstance(p, LearnableMask):
+            if isinstance(p, LearnableMask):
                 num_pruned = int((p.p1 * p.factor).int())
                 structures_per_pruned_instance = self.model_sizes_org[n][0]  # p.non_pruning_size
                 max_structures = self.model_sizes_org[n][1]  # p.pruning_size
@@ -164,8 +134,98 @@ class LogisticWeightPruningHook(Hook):
                   logger='current',
                   level=logging.INFO)
 
+    def _get_pruning_type(self, module):
+        if isinstance(module, torch.nn.Linear):
+            return tp.prune_linear_out_channels
+        elif isinstance(module, torch.nn.Conv2d):
+            return tp.prune_conv_out_channels
+        elif isinstance(module, ConvModule):
+            return tp.prune_conv_out_channels
+        else:
+            return tp.prune_multihead_attention_out_channels
+
+    def remove_empty_modules(self, model, module, module_name):
+        remove_indexes = self._get_remove_indexes(module)
+
+        if self.debug and len(remove_indexes) >= list(module.masks.values())[0].pruning_size:
+            self._remove_module_completely(module_name, model)
+
+    def _remove_module_completely(self, module_name, model):
+        print(f"remove completely {module_name} by Empty")
+        if "ffn" in module_name:
+            module_name = module_name[:module_name.index(".ffn.")+4]
+            rsetattr(model, module_name, DummyModule())
+            self.history.append(f"deleteffn {module_name}")
+            return
+
+        rsetattr(model, module_name, EmptyModule())
+        self.history.append(f"delete {module_name}")
+
+    def _reinit_masks(self, model):
+        for name, m in model.named_modules():
+            if getattr(m, "mask_class_wrapper", False):
+                m.reinit_masks()
+
+    def _get_remove_indexes(self, module):
+        mask_bias_soft = list(module.masks.values())[0].get_mask()[-1]
+        mask_bias = torch.where(mask_bias_soft < 0.001, 1, 0)
+        return mask_bias.nonzero(as_tuple=True)[0].tolist()
+
+    def _prune_module(self, model, module, DG, _forward_func, _output_transform):
+        remove_indexes = self._get_remove_indexes(module)
+
+        if len(remove_indexes) > 0:
+            if isinstance(module, ConvModule):
+                module_to_prune = module.conv
+            else:
+                module_to_prune = module
+            tp_type = self._get_pruning_type(module)
+            try:
+                group = DG.get_pruning_group(module_to_prune, tp_type, idxs=remove_indexes)
+            except Exception as e:
+                print(e)
+                return 0
+            if DG.check_pruning_group(group) and len(remove_indexes) > 0:
+                model.eval()
+                group.prune()
+                self._reinit_masks(model)
+                return len(remove_indexes)
+            else:
+                return 0
+        else:
+            return 0
+
+    """
+    Checks weather the given module should be pruned. Return true if yes otherwise false
+    """
+
+    def _check_if_prunable(self, module):
+        res_bool = True
+        # Is a wrapper class
+        res_bool &= getattr(module, "mask_class_wrapper", False)
+        if not res_bool:
+            return False
+
+        first_mask = list(module.masks.values())[0]
+
+        # has at least one mask
+        res_bool &= len(list(module.masks.values())) > 0
+        #
+        is_conv = isinstance(module, torch.nn.Conv2d) or isinstance(module, ConvModule)
+        masks_are_convs = isinstance(first_mask, LearnableMaskConv2d) or isinstance(first_mask, LearnableMaskMHA)
+
+        is_linear = isinstance(module, torch.nn.Linear) or isinstance(module, torch.nn.MultiheadAttention)
+        masks_are_linear = isinstance(first_mask, LearnableMaskLinear)
+
+        module_type_bool = (is_conv and masks_are_convs) or (is_linear and masks_are_linear)
+
+        return res_bool and module_type_bool
+
     def prune_weight(self, model):
-        data_batch = model.module.data_preprocessor(self.get_data_batch((3, 512, 512)))
+        if hasattr(model, 'data_preprocessor'):
+            data_batch = model.data_preprocessor(self.get_data_batch((3, 512, 512)))
+        else:
+            data_batch = model.module.data_preprocessor(self.get_data_batch((3, 512, 512)))
         set_identity_layer_mode(model, True)
 
         def _forward_func(self, data):
@@ -177,99 +237,17 @@ class LogisticWeightPruningHook(Hook):
                 l.append(i.seg_logits.data)
             return l
 
-        # model.eval()
+        num_removed = 0
+        # Remove all completely empty modules
+        for module_name, module in model.named_modules():
+            if self._check_if_prunable(module):
+                self.remove_empty_modules(model, module, module_name)
+
         DG = tp.DependencyGraph().build_dependency(model, example_inputs=data_batch, forward_fn=_forward_func,
                                                    output_transform=_output_transform)
-        # model.train()
-        num_removed = 0
         for module_name, module in model.named_modules():
-            if getattr(module, "mask_class_wrapper", False):
-                if len(list(module.masks.values())) > 0 and (
-                        ((isinstance(module, torch.nn.Conv2d) or isinstance(module, ConvModule))
-                         and (isinstance(list(module.masks.values())[0], LearnableMaskConv2d) or isinstance(
-                                    list(module.masks.values())[0], LearnableMaskMHA))) \
-                        or ((isinstance(module, torch.nn.Linear) or isinstance(module,
-                                                                               torch.nn.MultiheadAttention)) and isinstance(
-                    list(module.masks.values())[0], LearnableMaskLinear))):
-
-                    # if self.debug and ("decode_head.convs" in module_name):
-                    #    print(f"Skipped module {module_name}")
-                    #    continue
-                    mask_bias_soft = list(module.masks.values())[0].get_mask()[-1]
-
-                    mask_bias = torch.where(mask_bias_soft < 0.001, 1, 0)
-                    remove_indexes = mask_bias.nonzero(as_tuple=True)[0].tolist()
-
-                    if len(remove_indexes) > 0:
-                        mo = module
-                        if isinstance(module, torch.nn.Linear):
-                            tp_type = tp.prune_linear_out_channels
-                        elif isinstance(module, torch.nn.Conv2d):
-                            tp_type = tp.prune_conv_out_channels
-                        elif isinstance(module, ConvModule):
-                            mo = module.conv
-                            tp_type = tp.prune_conv_out_channels
-                        else:
-                            tp_type = tp.prune_multihead_attention_out_channels
-
-                        if self.debug and len(remove_indexes) >= list(module.masks.values())[0].pruning_size:
-                            print(f"remove completely {module_name} by Empty")
-                            rsetattr(model, module_name, EmptyModule())
-                            data_batch = model.module.data_preprocessor(self.get_data_batch((3, 512, 512)))
-                            self.history.append(f"delete {module_name}")
-                            DG = tp.DependencyGraph().build_dependency(model, example_inputs=data_batch,
-                                                                       forward_fn=_forward_func,
-                                                                       output_transform=_output_transform)
-                            continue
-
-                        group = DG.get_pruning_group(mo, tp_type, idxs=remove_indexes)
-                        if not DG.check_pruning_group(group):
-                            mask_object = list(module.masks.values())[0]
-                            with torch.no_grad():
-                                mask_object.p1.copy_(mask_object.p1 - 1 / mask_object.factor)
-                            mask_bias = torch.where(mask_bias < 0.0001, 1, 0)
-                            remove_indexes = mask_bias.nonzero(as_tuple=True)[0].tolist()
-                            group = DG.get_pruning_group(mo, tp_type, idxs=remove_indexes)
-                        # print(group)
-                        if DG.check_pruning_group(group) and len(remove_indexes) > 0:
-                            ## special case for MIX_FFN second Conv Layer
-                            """if "ffn.layers.2.conv" in module_name:
-                                previous_module_name = module_name.replace("ffn.layers.2.conv", "ffn.layers.0.conv")
-                                previous_ident_name = module_name.replace("ffn.layers.2.conv",
-                                                                          "ffn.layers.0")
-                                previous_module = model.get_submodule(previous_module_name)
-                                previous_ident = model.get_submodule(previous_ident_name)
-                                group_previous = DG.get_pruning_group(previous_module, tp.prune_conv_out_channels,
-                                                                      idxs=previous_ident.get_reverse_mapping_list(
-                                                                          remove_indexes))
-                                if DG.check_pruning_group(group):
-                                    group_previous.prune()"""
-                            ## end special case for MIX_FFN second Conv Layer
-
-                            # print("module_name: ", module_name)
-                            num_removed += len(remove_indexes)
-                            model.eval()
-                            # with torch.no_grad():
-                            #    before = _forward_func(model, data_batch)[0].seg_logits.data.cpu()
-
-                            group.prune()
-
-                            for name, m in model.named_modules():
-                                if getattr(m, "mask_class_wrapper", False):
-                                    m.reinit_masks()
-
-                            # model.eval()
-                            with torch.no_grad():
-                                after = _forward_func(model, data_batch)[0].seg_logits.data.cpu()
-
-                            # diff = torch.sum(torch.abs(before - after)) / torch.numel(before)
-                            # print(f"Difference after pruning: {diff}")
-                            """DG = tp.DependencyGraph().build_dependency(model, example_inputs=data_batch,
-                                                                       forward_fn=_forward_func,
-                                                                       output_transform=_output_transform)"""
-                        else:
-                            pass
-                            # print("Cant prune this layer")
+            if self._check_if_prunable(module):
+                num_removed += self._prune_module(model, module, DG, _forward_func, _output_transform)
 
         self.history.extend(DG.pruning_history())
         set_identity_layer_mode(model, False)

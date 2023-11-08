@@ -6,7 +6,10 @@ import os.path as osp
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 
-from mmseg.engine.hooks import LogisticWeightPruningHook, FLOPSMeasureHook, FPSMeasureHook, AcospHook
+from mmseg.engine.hooks import LogisticWeightPruningHook2, FLOPSMeasureHook, FPSMeasureHook, AcospHook, \
+    DynaSegFormerTopRUpdateHook
+
+from zeus.monitor import ZeusMonitor
 
 
 # TODO: support fuse_conv_bn, visualization, and format_only
@@ -87,12 +90,15 @@ def soft2hard_prunung(runner):
     for hook in runner._hooks:
         if isinstance(hook, AcospHook):
             hook.inject.soft_to_hard_k(runner.model)
-        if isinstance(hook, LogisticWeightPruningHook):
+        if isinstance(hook, LogisticWeightPruningHook2):
             pytorch_total_params = sum(p.numel() for p in runner.model.parameters() if p.requires_grad)
             hook.num_weights_total_first = pytorch_total_params
             hook.init_model_stats(runner.model)
             hook.prune_weight(runner.model)
             hook.print_pruning_stats(runner.model)
+        if isinstance(hook, DynaSegFormerTopRUpdateHook):
+            hook.set_topr_dgl(0.5, runner.model)
+
     for hook in runner._hooks:
         if isinstance(hook, FLOPSMeasureHook):
             hook.print_flops(hook.measure_flops(runner))
@@ -101,7 +107,7 @@ def test_loop_run(loop):
     loop.runner.call_hook('before_test')
     loop.runner.call_hook('before_test_epoch')
     loop.runner.model.eval()
-    max_iters = 500
+    max_iters = 100000
     for idx, data_batch in enumerate(loop.dataloader):
         loop.run_iter(idx, data_batch)
         if idx >= max_iters:
@@ -131,8 +137,15 @@ def runner_test(runner):
     soft2hard_prunung(runner)
     #print_fps(runner)
 
+    monitor = ZeusMonitor(gpu_indices=[0])
+    monitor.begin_window("heavy computation")
     metrics = test_loop_run(runner.test_loop)  # type: ignore
     runner.call_hook('after_run')
+
+    measurement = monitor.end_window("heavy computation")
+    print(f"Energy: {measurement.total_energy} J")
+    print(f"Time  : {measurement.time} s")
+
     return metrics
 
 def main():
@@ -171,21 +184,29 @@ def main():
     hooks = []
     cfg.model.backbone.pretrained = None
     cfg.model.pretrained = None
-    hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=True,
-                      logging_interval=5000, pruning_interval=5000, debug=True))
-    hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
-                      input_shape=(2048, 1024)))
-    hooks.append(dict(type='FPSMeasureHook', interval=5000))
-    cfg["custom_hooks"] = hooks
+    method = "own"#"dynasegformer"#"own"
+    if method == "own":
+        hooks.append(dict(type='LogisticWeightPruningHook2', do_explicit_pruning=True,
+                          logging_interval=5000, pruning_interval=5000, debug=True))
+        hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
+                          input_shape=(2048, 1024)))
+        #hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
+        #                  input_shape=(512, 512)))
+        hooks.append(dict(type='FPSMeasureHook', interval=5000))
+        cfg["custom_hooks"] = hooks
 
-    cfg.model.backbone.k = 7
-    cfg.model.decode_head.k = 7
+        cfg.model.backbone.k = 7
+        cfg.model.decode_head.k = 7
+    elif method == "dynasegformer":
+        hooks.append(dict(type='DynaSegFormerTopRUpdateHook', min_topr=0.5, sparsity_annealing_steps=1000))
+        hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
+                          input_shape=(2048, 1024)))
     # build the runner from config
     runner = Runner.from_cfg(cfg)
 
     # start testing
-    runner_test(runner)
 
+    runner_test(runner)
 
 if __name__ == '__main__':
     main()

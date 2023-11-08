@@ -16,13 +16,14 @@ from .isprs import ISPRSDataset
 from .levir import LEVIRCDDataset
 from .lip import LIPDataset
 from .loveda import LoveDADataset
-from .mapillary import MapillaryDataset_v1, MapillaryDataset_v2
+from .mapillary import MapillaryDataset_v1, MapillaryDataset_v2, MapillaryDatasetCS
 from .night_driving import NightDrivingDataset
 from .pascal_context import PascalContextDataset, PascalContextDataset59
 from .potsdam import PotsdamDataset
 from .refuge import REFUGEDataset
 from .stare import STAREDataset
 from .synapse import SynapseDataset
+from .gta import GTADataset
 # yapf: disable
 from .transforms import (CLAHE, AdjustGamma, Albu, BioMedical3DPad,
                          BioMedical3DRandomCrop, BioMedical3DRandomFlip,
@@ -58,5 +59,6 @@ __all__ = [
     'SynapseDataset', 'REFUGEDataset', 'MapillaryDataset_v1',
     'MapillaryDataset_v2', 'Albu', 'LEVIRCDDataset',
     'LoadMultipleRSImageFromFile', 'LoadSingleRSImageFromFile',
-    'ConcatCDInput', 'BaseCDDataset', 'DSDLSegDataset', 'CityscapesVideoDataset'
+    'ConcatCDInput', 'BaseCDDataset', 'DSDLSegDataset', 'CityscapesVideoDataset',
+    'GTADataset', 'MapillaryDatasetCS',
 ]

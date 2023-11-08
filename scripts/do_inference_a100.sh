@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#SBATCH --partition=gpub
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:a100_80gb:1
 #SBATCH --out=log/%j.out
 #SBATCH --time=20:00
 #SBATCH --mem=10G

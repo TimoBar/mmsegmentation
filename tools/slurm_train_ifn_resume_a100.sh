@@ -4,7 +4,8 @@
 
 ##GENERAL -----
 #SBATCH --cpus-per-task=2
-#SBATCH --gres=gpu:a100:1
+##SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100_80gb:1
 #SBATCH --mem=32000M
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1

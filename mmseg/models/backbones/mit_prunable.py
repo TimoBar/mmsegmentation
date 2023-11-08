@@ -9,7 +9,7 @@ from mmengine.model import BaseModule
 from torch import nn
 
 from . import mit
-from ..utils import IdentityConv2d, Identity
+from ..utils import IdentityConv2d, Identity, Conv2dWrapper, DummyModule
 
 import torch
 from mmcv.cnn import build_activation_layer
@@ -354,8 +354,9 @@ class MixFFNPrunable(BaseModule):
             bias=True,
             conv_class=MixFFN_Conv2d_pruned)
         ident = Identity(feedforward_channels, dim=1)
+        #ident = DummyModule()
         # 3x3 depth wise conv to provide positional encode information
-        pe_conv = IdentityConv2d(
+        pe_conv = Conv2dWrapper(
             in_channels=feedforward_channels,
             out_channels=feedforward_channels,
             kernel_size=3,
@@ -373,6 +374,34 @@ class MixFFNPrunable(BaseModule):
             conv_class=MixFFN_Conv2d_pruned)
         drop = nn.Dropout(ffn_drop)
         layers = [fc1, ident, pe_conv, self.activate, drop, fc2, drop]
+
+        """fc1 = Conv2dWrapper(
+            in_channels=in_channels,
+            out_channels=feedforward_channels,
+            kernel_size=1,
+            stride=1,
+            bias=True,
+            conv_class=MixFFN_Conv2d_pruned)
+        ident = DummyModule()
+        # 3x3 depth wise conv to provide positional encode information
+        pe_conv = Conv2dWrapper(
+            in_channels=feedforward_channels,
+            out_channels=feedforward_channels,
+            kernel_size=3,
+            stride=1,
+            padding=(3 - 1) // 2,
+            bias=True,
+            groups=feedforward_channels,
+            conv_class=MixFFN_Conv2d_pruned)
+        fc2 = IdentityConv2d(
+            in_channels=feedforward_channels,
+            out_channels=in_channels,
+            kernel_size=1,
+            stride=1,
+            bias=True,
+            conv_class=MixFFN_Conv2d_pruned)
+        drop = nn.Dropout(ffn_drop)
+        layers = [fc1, ident, pe_conv, self.activate, drop, fc2, drop]"""
         self.layers = Sequential(*layers)
         self.dropout_layer = build_dropout(
             dropout_layer) if dropout_layer else torch.nn.Identity()

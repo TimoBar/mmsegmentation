@@ -13,9 +13,10 @@ import logging
 import os.path as osp
 
 from mmseg.engine.hooks import LogisticWeightPruningHook
+from mmseg.engine.hooks.pruning_hook import LogisticWeightPruningHook2
 from mmseg.models import BaseSegmentor
 from mmseg.models.utils import set_identity_layer_mode
-from mmseg.models.utils.identity_conv import EmptyModule
+from mmseg.models.utils.identity_conv import EmptyModule, DummyModule
 from mmseg.models.utils.mask_wrapper import rgetattr, rsetattr
 from mmseg.structures import SegDataSample
 import torch_pruning as tp
@@ -56,6 +57,10 @@ class FLOPSMeasureHook(Hook):
                 name = name.replace("delete ", "")
                 rsetattr(model, name, EmptyModule())
                 del history[i]
+            elif "deleteffn " in name:
+                name = name.replace("deleteffn ", "")
+                rsetattr(model, name, DummyModule())
+                del history[i]
     def reload_model(self, history, model):
         self._delete_remove_layers(history, model)
         set_identity_layer_mode(model, True)
@@ -89,16 +94,22 @@ class FLOPSMeasureHook(Hook):
                 return self.module(*args, **kw)
         model = ModelWrapper(MODELS.build(self.model_cfg))
         model.eval()
-        log_hook = [h for h in runner._hooks if isinstance(h, LogisticWeightPruningHook)]
+        log_hook = [h for h in runner._hooks if isinstance(h, LogisticWeightPruningHook2)]
         if len(log_hook) > 0:
             log_hook = log_hook[0]
             history = log_hook.history
             self.reload_model(history, model)
+
+        """for module_name, module in model.named_modules():
+            if getattr(module, "set_topr_dgl", False):
+                module.set_topr_dgl(0.5)"""
+
         #model.eval()
         with torch.no_grad():
             data = model.module.data_preprocessor(self.get_data_batch())
             flop_analyzer = FlopAnalyzer(model, data['inputs'])
             flops = flop_analyzer.total()
+            #print(flop_analyzer.by_module())
             del flop_analyzer
         del model
         return _format_size(flops)

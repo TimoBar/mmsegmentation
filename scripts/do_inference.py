@@ -16,6 +16,8 @@ from argparse import ArgumentParser
 from mmcv.transforms import CenterCrop
 from get_flops_segformer import get_additional_segformer_flops
 
+from zeus.monitor import ZeusMonitor
+
 
 def main():
     parser = ArgumentParser()
@@ -94,13 +96,21 @@ def do_inference(config_path, use_ckpt=True, input_shape=(3, 512, 512), prefix=N
 
     runner = Runner.from_cfg(cfg)
     benchmark_metrics = benchmark(config_path, repeat_times=repeat_times, n_images=n_images_benchmark, n_warmup=n_warmup)
+    monitor = ZeusMonitor(gpu_indices=[0])
+    monitor.begin_window("heavy computation")
     metrics = runner.test()
+    measurement = monitor.end_window("heavy computation")
+    print(f"Energy: {measurement.total_energy} J")
+    print(f"Time  : {measurement.time} s")
+
     results = dict(
         flops=flops,
         params=params,
         fps=benchmark_metrics['average_fps'],
         fps_var=benchmark_metrics['fps_variance'],
-        mIoU=metrics['mIoU']
+        mIoU=metrics['mIoU'],
+        energy=measurement.total_energy,
+        energy_time=measurement.time,
     )
     if debug:
         save_dir += '_debug'

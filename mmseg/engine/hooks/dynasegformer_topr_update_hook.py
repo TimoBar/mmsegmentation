@@ -23,6 +23,12 @@ class DynaSegFormerTopRUpdateHook(Hook):
             if getattr(module, "set_topr_dgl", False):
                 module.set_topr_dgl(value)
 
+    def before_test(self, runner) -> None:
+        model = runner.model
+        sparsity = self.min_topr
+        topr_t = 1 - sparsity
+        self.set_topr_dgl(topr_t, model)
+
     def before_train_iter(self,
                          runner,
                          batch_idx: int,

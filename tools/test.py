@@ -6,6 +6,8 @@ import os.path as osp
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 
+from zeus.monitor import ZeusMonitor
+
 
 # TODO: support fuse_conv_bn, visualization, and format_only
 def parse_args():
@@ -116,7 +118,13 @@ def main():
     runner = Runner.from_cfg(cfg)
 
     # start testing
+    monitor = ZeusMonitor(gpu_indices=[0])
+    monitor.begin_window("heavy computation")
     runner.test()
+    measurement = monitor.end_window("heavy computation")
+    print(f"Energy: {measurement.total_energy} J")
+    print(f"Time  : {measurement.time} s")
+
 
 
 if __name__ == '__main__':

@@ -25,13 +25,13 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         self.linear1 = nn.Linear(input_features, output_features)
         self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(output_features, output_features)
+        # self.linear2 = nn.Linear(output_features, output_features)
 
     def forward(self, x):
         out = self.linear1(x)
         out = self.relu(out)
-        out = self.linear2(out)
-        out = self.relu(out)
+        # out = self.linear2(out)
+        # out = self.relu(out)
         return out
 
 
@@ -53,6 +53,8 @@ class DGLLayer(nn.Module):
         return self.loss
 
     def forward(self, x, l_w, l_b=None):
+        # print("DGL: ", x.shape, l_w.shape)
+        # self.set_topr(0.5)
         is_batched = x.dim() == 3
         if not is_batched:
             x = x.unsqueeze(1)
@@ -68,15 +70,22 @@ class DGLLayer(nn.Module):
 
         gate_predictor_input = torch.nn.functional.linear(x_norm, l_w, l_b)
         gate_predictor_logits = self.gate_predictor(gate_predictor_input)
-        self.loss = torch.sum(torch.abs(gate_predictor_logits))
+        if self.training:
+            self.loss = torch.sum(torch.abs(gate_predictor_logits))
 
-        mask = torch.zeros((n, self.out_features), device=x.get_device())
-        output = torch.zeros((n, self.out_features, l), device=x.get_device())
-        indices = torch.topk(gate_predictor_logits, k=self.top_k, dim=1).indices
+        mask = torch.zeros((n, self.out_features), device=x.device)
+        output = torch.zeros((n, self.out_features, l), device=x.device)
+        indices = torch.topk(gate_predictor_logits, k=self.top_k, dim=1, sorted=False).indices
         w_list = []
         for i_n in range(0, n):  # TODO: Implement without for loop
             mask[i_n, indices[i_n]] = 1
             w_list.append(l_w[indices[i_n], :])
+
+        """w = torch.stack(w_list)
+        w = w.permute(0, 2, 1).unsqueeze(1)
+        x_p = x.unsqueeze(2)
+
+        output_not_null = torch.matmul(x_p, w).squeeze(2).permute(0, 2, 1)"""
         w = torch.stack(w_list)
         bz, out_features, in_features = w.shape
         w = w.reshape(bz * out_features, in_features, 1, 1)
@@ -87,7 +96,7 @@ class DGLLayer(nn.Module):
         for i_n in range(0, n):
             output[i_n, indices[i_n]] = output_not_null[i_n, :] + (bias[indices[i_n]] if l_b is not None else 0)
 
-        return output.permute(2, 0, 1)
+        return output.permute(2, 0, 1), indices
 
 
 class DynamicGatedMultiheadAttention(nn.Module):
@@ -115,7 +124,7 @@ class DynamicGatedMultiheadAttention(nn.Module):
             self.in_proj_bias = Parameter(torch.empty(3 * embed_dim, **factory_kwargs))
 
         self.out_proj = NonDynamicallyQuantizableLinear(embed_dim, embed_dim, bias=self.bias, **factory_kwargs)
-        self.dgl_layer_out = DGLLayer(embed_dim, embed_dim, top_r=1.0)
+        # self.dgl_layer_out = DGLLayer(embed_dim, embed_dim, top_r=1.0)
         self._reset_parameters()
 
     def set_topr_dgl(self, topr):
@@ -123,7 +132,7 @@ class DynamicGatedMultiheadAttention(nn.Module):
         self.dgl_layer_q.set_topr(topr)
         self.dgl_layer_k.set_topr(topr)
         self.dgl_layer_v.set_topr(topr)
-        self.dgl_layer_out.set_topr(topr)
+        # self.dgl_layer_out.set_topr(topr)
 
     def _inweight_projection(self, q, k, v, w, b):
         w_q, w_k, w_v = w.chunk(3)
@@ -174,35 +183,95 @@ class DynamicGatedMultiheadAttention(nn.Module):
 
         q, k, v = self._inweight_projection(query, key, value, self.in_proj_weight, self.in_proj_bias)
 
-        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        # print(k.size(), k.shape[0], bsz, self.num_heads, self.head_dim)
+        q, q_indices = q
+        k, k_indices = k
+        src_len = k.shape[0]
+        v, v_indices = v
+
+        head_indices_q = dict()
+        head_indices_k = dict()
+        head_indices_v = dict()
+        for i in range(q_indices.shape[1]):
+            i_mod_q = int(q_indices[0, i] // self.head_dim)
+            i_mod_k = int(k_indices[0, i] // self.head_dim)
+            i_mod_v = int(v_indices[0, i] // self.head_dim)
+            if not i_mod_q in head_indices_q:
+                head_indices_q[i_mod_q] = []
+            if not i_mod_k in head_indices_k:
+                head_indices_k[i_mod_k] = []
+            if not i_mod_v in head_indices_v:
+                head_indices_v[i_mod_v] = []
+
+            head_indices_q[i_mod_q].append(q_indices[0, i])
+            head_indices_k[i_mod_k].append(k_indices[0, i])
+            head_indices_v[i_mod_v].append(v_indices[0, i])
+
+
+        attn_output_list = []
+        attn_output_weights_list = []
+        for head_num in range(self.num_heads):
+            qk_intersection = []
+            if head_num in head_indices_q and head_num in head_indices_k:
+                for i in range(len(head_indices_q[head_num])):
+                    if head_indices_q[head_num][i] in head_indices_k[head_num]:
+                        qk_intersection.append(head_indices_q[head_num][i])
+
+            if len(qk_intersection) == 0:
+                qk_intersection.append(0)
+
+            qn = q[:, :, qk_intersection].transpose(0, 1)
+            kn = k[:, :, qk_intersection].transpose(0, 1)
+            if head_num in head_indices_v:
+                vn = v[:, :, head_indices_v[head_num]].transpose(0, 1)
+            else:
+                continue
+            B, Nt, E = qn.shape
+            q_scaled = qn / math.sqrt(E)
+            k_t = kn.transpose(-2, -1)
+            attn_output_weights = torch.bmm(q_scaled, k_t)
+            attn_output_weights = softmax(attn_output_weights, dim=-1)
+            attn_output_weights_list.append(attn_output_weights)
+            attn_output = torch.bmm(attn_output_weights, vn)
+            attn_output_list.append(attn_output)
+
+        attn_output = torch.cat(attn_output_list, dim=2)
+        #attn_output_weights = torch.cat(attn_output_weights_list, dim=2)
+        """q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         k = k.view(k.shape[0], bsz * self.num_heads, self.head_dim).transpose(0, 1)
         v = v.view(v.shape[0], bsz * self.num_heads, self.head_dim).transpose(0, 1)
         src_len = k.size(1)
 
         B, Nt, E = q.shape
         q_scaled = q / math.sqrt(E)
-        attn_output_weights = torch.bmm(q_scaled, k.transpose(-2, -1))
+        k_t = k.transpose(-2, -1)
+        zq = torch.zeros_like(q_scaled)
+        attn_output_weights = torch.bmm(q_scaled, k_t)
         attn_output_weights = softmax(attn_output_weights, dim=-1)
-        attn_output = torch.bmm(attn_output_weights, v)
+        attn_output = torch.bmm(attn_output_weights, v)"""
 
-        attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len * bsz, embed_dim)
-        attn_output = self.dgl_layer_out(attn_output, self.out_proj.weight, self.out_proj.bias)
-        attn_output = attn_output.view(tgt_len, bsz, attn_output.size(2))
+        # attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len * bsz, embed_dim)
+        # attn_output = self.dgl_layer_out(attn_output, self.out_proj.weight, self.out_proj.bias)
+        # attn_output = attn_output.view(tgt_len, bsz, attn_output.size(2))
 
-        attn_output_weights = attn_output_weights.view(bsz, self.num_heads, tgt_len, src_len)
-        if average_attn_weights:
-            attn_output_weights = attn_output_weights.mean(dim=1)
+        attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len * bsz, attn_output.shape[-1])
+        attn_output = linear(attn_output, self.out_proj.weight[:, v_indices[0,:]], self.out_proj.bias)
+        attn_output = attn_output.view(tgt_len, bsz, attn_output.size(1))
+
+        #attn_output_weights = attn_output_weights.view(bsz, self.num_heads, tgt_len, src_len)
+        #if average_attn_weights:
+        #    attn_output_weights = attn_output_weights.mean(dim=1)
 
         if not is_batched:
             # squeeze the output if input was unbatched
             attn_output = attn_output.squeeze(1)
-            attn_output_weights = attn_output_weights.squeeze(0)
+            #attn_output_weights = attn_output_weights.squeeze(0)
 
         if self.batch_first and is_batched:
-            return attn_output.transpose(1, 0), attn_output_weights
+            #return attn_output.transpose(1, 0), attn_output_weights
+            return attn_output.transpose(1, 0), None
         else:
-            return attn_output, attn_output_weights
+            #return attn_output, attn_output_weights
+            return attn_output, None
 
 
 class DynamicGatedConv2d(nn.Conv2d):
@@ -232,8 +301,9 @@ class DynamicGatedConv2d(nn.Conv2d):
         if not is_batched:
             input = input.unsqueeze(0)
         b, c, h, w = input.size()
-        out = self.cnn_dgl(input.permute(2, 3, 0, 1).reshape(h * w, b, c), self.weight.squeeze(3).squeeze(2),
-                           self.bias).permute(1, 2, 0).reshape(b, self.cnn_dgl.out_features, h, w)
+        out, _ = self.cnn_dgl(input.permute(2, 3, 0, 1).reshape(h * w, b, c), self.weight.squeeze(3).squeeze(2),
+                              self.bias)
+        out = out.permute(1, 2, 0).reshape(b, self.cnn_dgl.out_features, h, w)
         if not is_batched:
             out = out.squeeze(0)
         return out
