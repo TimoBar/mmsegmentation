@@ -8,7 +8,7 @@ from torch import nn
 import os.path as osp
 
 from mmseg.apis import inference_model, init_model, show_result_pyplot
-from mmseg.engine.hooks import LogisticWeightPruningHook2
+from mmseg.engine.hooks import PruningHook
 
 
 def main():
@@ -34,8 +34,8 @@ def main():
     config.model.backbone.k = 7
     config.model.decode_head.k = 7
     model = init_model(config, args.checkpoint, device=args.device)
-    hook = LogisticWeightPruningHook2(do_explicit_pruning=True,
-                      logging_interval=5000, pruning_interval=5000, debug=True)
+    hook = PruningHook(do_explicit_pruning=True,
+                       logging_interval=5000, pruning_interval=5000, debug=True)
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     hook.num_weights_total_first = pytorch_total_params
     hook.init_model_stats(model)

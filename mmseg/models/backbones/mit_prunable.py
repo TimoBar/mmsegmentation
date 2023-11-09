@@ -1,36 +1,26 @@
 import warnings
 
 import torch
+from mmcv.cnn import build_activation_layer
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.drop import build_dropout
-from mmcv.cnn.bricks.transformer import MultiheadAttention
 from mmengine import deprecated_api_warning
+from mmengine import to_2tuple
 from mmengine.model import BaseModule
+from mmengine.model import Sequential
 from torch import nn
 
 from . import mit
-from ..utils import IdentityConv2d, Identity, Conv2dWrapper, DummyModule
-
-import torch
-from mmcv.cnn import build_activation_layer
-from mmcv.cnn.bricks.drop import build_dropout
-from mmengine.model import BaseModule, Sequential
-from torch import nn
-
+from .mit import nlc_to_nchw, nchw_to_nlc, MixVisionTransformer
+from ..utils import Identity, Conv2dWrapper
 from ..utils import IdentityConv2d
 from ..utils import mask_class_wrapper
-from .mit import nlc_to_nchw, nchw_to_nlc, MixVisionTransformer
-import torch
-from mmcv.cnn import build_norm_layer
-from mmengine import to_2tuple
-from mmengine.model import BaseModule
-
 from ..utils.embed import AdaptivePadding
 from ...registry import MODELS
 
-
-#from .mit import AdaptivePadding
-
+"""
+creates a wrapper class for MultiheadAttention that has a learnable pruning mask
+"""
 MultiheadAttention_pruned = mask_class_wrapper(nn.MultiheadAttention, mode="mha_linear")
 
 
@@ -79,7 +69,9 @@ class MultiheadAttentionPrunable(BaseModule):
         self.num_heads = num_heads
         self.batch_first = batch_first
 
-        #self.ident_in = Identity(embed_dims)
+        """
+        Use wrapper class instead of MultiheadAttention
+        """
         self.attn = MultiheadAttention_pruned(embed_dims, num_heads, attn_drop,
                                           **kwargs)
 
@@ -180,7 +172,11 @@ class MultiheadAttentionPrunable(BaseModule):
 
         return identity + self.dropout_layer(self.proj_drop(out))
 
-EfficientMultiheadAttention_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv")
+
+"""
+creates a wrapper class for EfficientMultiheadAttention that has a learnable pruning mask
+"""
+Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv")
 class EfficientMultiheadAttentionPrunable(MultiheadAttentionPrunable):
     """An implementation of Efficient Multi-head Attention of Segformer.
 
@@ -227,7 +223,6 @@ class EfficientMultiheadAttentionPrunable(MultiheadAttentionPrunable):
             init_cfg=init_cfg,
             batch_first=batch_first,
             bias=qkv_bias)
-        from mmcv.cnn import Conv2d
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
@@ -236,7 +231,7 @@ class EfficientMultiheadAttentionPrunable(MultiheadAttentionPrunable):
                 out_channels=embed_dims,
                 kernel_size=sr_ratio,
                 stride=sr_ratio,
-                conv_class=EfficientMultiheadAttention_Conv2d_pruned)
+                conv_class=Conv2d_pruned)
             # The ret[0] of build_norm_layer is norm name.
             self.norm = build_norm_layer(norm_cfg, embed_dims)[1]
 
@@ -308,7 +303,6 @@ class EfficientMultiheadAttentionPrunable(MultiheadAttentionPrunable):
         return identity + self.dropout_layer(self.proj_drop(out))
 
 
-MixFFN_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv")
 class MixFFNPrunable(BaseModule):
     """An implementation of MixFFN of Segformer.
 
@@ -338,7 +332,6 @@ class MixFFNPrunable(BaseModule):
                  dropout_layer=None,
                  init_cfg=None):
         super().__init__(init_cfg)
-        from mmcv.cnn import Conv2d
 
         self.embed_dims = embed_dims
         self.feedforward_channels = feedforward_channels
@@ -352,7 +345,7 @@ class MixFFNPrunable(BaseModule):
             kernel_size=1,
             stride=1,
             bias=True,
-            conv_class=MixFFN_Conv2d_pruned)
+            conv_class=Conv2d_pruned)
         ident = Identity(feedforward_channels, dim=1)
         #ident = DummyModule()
         # 3x3 depth wise conv to provide positional encode information
@@ -364,44 +357,17 @@ class MixFFNPrunable(BaseModule):
             padding=(3 - 1) // 2,
             bias=True,
             groups=feedforward_channels,
-            conv_class=MixFFN_Conv2d_pruned)
+            conv_class=Conv2d_pruned)
         fc2 = IdentityConv2d(
             in_channels=feedforward_channels,
             out_channels=in_channels,
             kernel_size=1,
             stride=1,
             bias=True,
-            conv_class=MixFFN_Conv2d_pruned)
+            conv_class=Conv2d_pruned)
         drop = nn.Dropout(ffn_drop)
         layers = [fc1, ident, pe_conv, self.activate, drop, fc2, drop]
 
-        """fc1 = Conv2dWrapper(
-            in_channels=in_channels,
-            out_channels=feedforward_channels,
-            kernel_size=1,
-            stride=1,
-            bias=True,
-            conv_class=MixFFN_Conv2d_pruned)
-        ident = DummyModule()
-        # 3x3 depth wise conv to provide positional encode information
-        pe_conv = Conv2dWrapper(
-            in_channels=feedforward_channels,
-            out_channels=feedforward_channels,
-            kernel_size=3,
-            stride=1,
-            padding=(3 - 1) // 2,
-            bias=True,
-            groups=feedforward_channels,
-            conv_class=MixFFN_Conv2d_pruned)
-        fc2 = IdentityConv2d(
-            in_channels=feedforward_channels,
-            out_channels=in_channels,
-            kernel_size=1,
-            stride=1,
-            bias=True,
-            conv_class=MixFFN_Conv2d_pruned)
-        drop = nn.Dropout(ffn_drop)
-        layers = [fc1, ident, pe_conv, self.activate, drop, fc2, drop]"""
         self.layers = Sequential(*layers)
         self.dropout_layer = build_dropout(
             dropout_layer) if dropout_layer else torch.nn.Identity()
@@ -415,7 +381,6 @@ class MixFFNPrunable(BaseModule):
         return identity + self.dropout_layer(out)
 
 
-PatchEmbed_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="mha_conv")
 class PatchEmbedPrunable(BaseModule):
     """Image to Patch Embedding.
 
@@ -479,7 +444,7 @@ class PatchEmbedPrunable(BaseModule):
         padding = to_2tuple(padding)
 
         self.projection = IdentityConv2d(
-            conv_class=PatchEmbed_Conv2d_pruned,
+            conv_class=Conv2d_pruned,
             in_channels=in_channels,
             out_channels=embed_dims,
             kernel_size=kernel_size,
@@ -541,15 +506,11 @@ class PatchEmbedPrunable(BaseModule):
 
 @MODELS.register_module()
 class MixVisionTransformerPrunable(MixVisionTransformer):
-    def __init__(self, embed_dims=64, k=3, *args, **kw):
+    def __init__(self, embed_dims=64, k=7, *args, **kw):
         global MultiheadAttention_pruned
         MultiheadAttention_pruned = mask_class_wrapper(nn.MultiheadAttention, mode="mha_linear", embedded_dims=embed_dims, k=k)
-        global PatchEmbed_Conv2d_pruned
-        PatchEmbed_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="mha_conv", embedded_dims=embed_dims, k=k)
-        global MixFFN_Conv2d_pruned
-        MixFFN_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv", k=k)
-        global EfficientMultiheadAttention_Conv2d_pruned
-        EfficientMultiheadAttention_Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv", k=k)
+        global Conv2d_pruned
+        Conv2d_pruned = mask_class_wrapper(torch.nn.Conv2d, mode="conv", k=k)
         mit.MixFFN = MixFFNPrunable
         mit.PatchEmbed = PatchEmbedPrunable
         mit.EfficientMultiheadAttention = EfficientMultiheadAttentionPrunable

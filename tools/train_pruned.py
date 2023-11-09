@@ -1,4 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import sys, os
+if '/beegfs/work/bartels/mmsegmentation' in sys.path:
+    sys.path.remove('/beegfs/work/bartels/mmsegmentation')
+
+sys.path.append(os.getcwd())
+
+
 import torch
 import argparse
 import logging
@@ -10,59 +17,6 @@ from torch import autograd
 
 from tools.test_pruned import soft2hard_prunung
 
-"""
-Since I have to overwrite the classes used in the models, the order of the import is important
-"""
-
-def overwrite_classes_static_pruning():
-    from mmseg.models.utils.static_pruning import StaticMaskConv2d, StaticMaskLinear, mask_class_wrapper
-
-    torch.nn.Conv2d_base = torch.nn.Conv2d
-    torch.nn.Conv2d = mask_class_wrapper(torch.nn.Conv2d_base, mode="conv")
-
-    torch.nn.MultiheadAttention_base = torch.nn.MultiheadAttention
-    torch.nn.MultiheadAttention = mask_class_wrapper(torch.nn.MultiheadAttention_base, mode="linear")
-    torch.nn.Linear_base = torch.nn.Linear
-    torch.nn.Linear = mask_class_wrapper(torch.nn.Linear_base, mode="linear")
-
-    from mmseg.registry import MODELS
-    import mmcv
-    mmcv.cnn.Conv2d_base = mmcv.cnn.Conv2d
-    mmcv.cnn.Conv2d = mask_class_wrapper(mmcv.cnn.Conv2d_base, mode="conv")
-    MODELS.register_module('Conv2d', module=torch.nn.Conv2d)
-def overwrite_classes_logistic_pruning():
-    from mmseg.models.utils import mask_class_wrapper
-
-    torch.nn.Conv2d_base = torch.nn.Conv2d
-    torch.nn.Conv2d = mask_class_wrapper(torch.nn.Conv2d_base, mode="conv")
-
-    torch.nn.MultiheadAttention_base = torch.nn.MultiheadAttention
-    torch.nn.MultiheadAttention = mask_class_wrapper(torch.nn.MultiheadAttention_base, mode="linear")
-    torch.nn.Linear_base = torch.nn.Linear
-    torch.nn.Linear = mask_class_wrapper(torch.nn.Linear_base, mode="linear")
-
-    from mmseg.registry import MODELS
-    import mmcv
-    mmcv.cnn.Conv2d_base = mmcv.cnn.Conv2d
-    mmcv.cnn.Conv2d = mask_class_wrapper(mmcv.cnn.Conv2d_base, mode="conv")
-    MODELS.register_module('Conv2d', module=torch.nn.Conv2d)
-
-def overwrite_classes_logistic_kernel_pruning():
-    from mmseg.models.utils import mask_class_wrapper
-
-    torch.nn.Conv2d_base = torch.nn.Conv2d
-    torch.nn.Conv2d = mask_class_wrapper(torch.nn.Conv2d_base, mode="kernel")
-
-    torch.nn.MultiheadAttention_base = torch.nn.MultiheadAttention
-    torch.nn.MultiheadAttention = mask_class_wrapper(torch.nn.MultiheadAttention_base, mode="linear")
-    torch.nn.Linear_base = torch.nn.Linear
-    torch.nn.Linear = mask_class_wrapper(torch.nn.Linear_base, mode="linear")
-
-    from mmseg.registry import MODELS
-    import mmcv
-    mmcv.cnn.Conv2d_base = mmcv.cnn.Conv2d
-    mmcv.cnn.Conv2d = mask_class_wrapper(mmcv.cnn.Conv2d_base, mode="kernel")
-    MODELS.register_module('Conv2d', module=torch.nn.Conv2d)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
@@ -164,15 +118,7 @@ def main():
     if not args.explicit_pruning:
         torch.backends.cudnn.benchmark = True
 
-    if args.pruning_mode == "logistic":
-        overwrite_classes_logistic_pruning()
-    elif args.pruning_mode == "logistic_kernel":
-        overwrite_classes_logistic_kernel_pruning()
-    elif args.pruning_mode == "static":
-        overwrite_classes_static_pruning()
-    elif args.pruning_mode == "segformer":
-        pass
-    elif args.pruning_mode == "acosp":
+    if args.pruning_mode == "segformer":
         pass
     else:
         raise NotImplementedError(f"The pruning mode {args.pruning_mode} is not yet implemented")
@@ -194,8 +140,7 @@ def main():
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
-        cfg.work_dir = osp.join('./work_dirs',
-                                osp.splitext(osp.basename(args.config))[0])
+        cfg.work_dir = osp.join('./work_dirs', osp.splitext(osp.basename(args.config))[0])
 
     # enable automatic-mixed-precision training
     if args.amp is True:
@@ -225,10 +170,8 @@ def main():
             cfg.resume = False
 
     hooks = []
-    if args.pruning_mode == "acosp":
-        hooks.append(dict(type='AcospHook', interval=185, max_iters=cfg.train_cfg.max_iters))
-    elif args.pruning_mode == "logistic" or args.pruning_mode == "logistic_kernel" or args.pruning_mode == "segformer":
-        hooks.append(dict(type='LogisticWeightPruningHook', do_explicit_pruning=args.explicit_pruning, prune_at_start=args.prune_at_start, logging_interval=args.pruning_logging_interval, pruning_interval=args.pruning_interval, debug=True))
+    if args.pruning_mode == "segformer":
+        hooks.append(dict(type='PruningHook', do_explicit_pruning=args.explicit_pruning, prune_at_start=args.prune_at_start, logging_interval=args.pruning_logging_interval, pruning_interval=args.pruning_interval, debug=True))
 
     if args.with_fps:
         hooks.append(dict(type='FPSMeasureHook', interval=args.fps_interval))

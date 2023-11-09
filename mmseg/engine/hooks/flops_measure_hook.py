@@ -1,25 +1,19 @@
-from typing import Any, Optional, Union
+import logging
+from typing import Optional
 
-import numpy as np
 import torch
+import torch_pruning as tp
 from mmengine import print_log, MODELS
 from mmengine.analysis import FlopAnalyzer
 from mmengine.analysis.print_helper import _format_size
 from mmengine.hooks import Hook
-from mmengine.model import revert_sync_batchnorm
 from mmengine.registry import HOOKS
-import time
-import logging
-import os.path as osp
 
-from mmseg.engine.hooks import LogisticWeightPruningHook
-from mmseg.engine.hooks.pruning_hook import LogisticWeightPruningHook2
-from mmseg.models import BaseSegmentor
+from mmseg.engine.hooks.pruning_hook import PruningHook
 from mmseg.models.utils import set_identity_layer_mode
 from mmseg.models.utils.identity_conv import EmptyModule, DummyModule
-from mmseg.models.utils.mask_wrapper import rgetattr, rsetattr
+from mmseg.models.utils.mask_wrapper import rsetattr
 from mmseg.structures import SegDataSample
-import torch_pruning as tp
 
 
 @HOOKS.register_module()
@@ -94,10 +88,10 @@ class FLOPSMeasureHook(Hook):
                 return self.module(*args, **kw)
         model = ModelWrapper(MODELS.build(self.model_cfg))
         model.eval()
-        log_hook = [h for h in runner._hooks if isinstance(h, LogisticWeightPruningHook2)]
-        if len(log_hook) > 0:
-            log_hook = log_hook[0]
-            history = log_hook.history
+        pruning_hook = [h for h in runner._hooks if isinstance(h, PruningHook)]
+        if len(pruning_hook) > 0:
+            pruning_hook = pruning_hook[0]
+            history = pruning_hook.history
             self.reload_model(history, model)
 
         """for module_name, module in model.named_modules():

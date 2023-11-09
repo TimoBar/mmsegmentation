@@ -23,10 +23,7 @@ from .timm_backbone import TIMMBackbone
 from .twins import PCPVT, SVT
 from .unet import UNet
 from .vit import VisionTransformer
-from .zegclip_img_encoder import CLIPVisionTransformer, VPTCLIPVisionTransformer
-from .zegclip_text_encoder import CLIPTextEncoder
 from .mit_prunable import MixVisionTransformerPrunable
-from .mit_dynasegformer import MixVisionTransformerDynaSegFormer
 
 __all__ = [
     'ResNet', 'ResNetV1c', 'ResNetV1d', 'ResNeXt', 'HRNet', 'FastSCNN',
@@ -34,6 +31,6 @@ __all__ = [
     'VisionTransformer', 'SwinTransformer', 'MixVisionTransformer',
     'BiSeNetV1', 'BiSeNetV2', 'ICNet', 'TIMMBackbone', 'ERFNet', 'PCPVT',
     'SVT', 'STDCNet', 'STDCContextPathNet', 'BEiT', 'MAE', 'PIDNet', 'MSCAN',
-    'DDRNet', 'CLIPTextEncoder', 'CLIPVisionTransformer', 'VPTCLIPVisionTransformer',
-    'MixVisionTransformerPrunable', 'MixVisionTransformerDynaSegFormer'
+    'DDRNet',
+    'MixVisionTransformerPrunable'
 ]

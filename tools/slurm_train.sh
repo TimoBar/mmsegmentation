@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 
-set -x
 
-PARTITION=gpu
-JOB_NAME=$1
-CONFIG=$2
-GPUS=${GPUS:-4}
-GPUS_PER_NODE=${GPUS_PER_NODE:-4}
-CPUS_PER_TASK=${CPUS_PER_TASK:-5}
-SRUN_ARGS=${SRUN_ARGS:-""}
-PY_ARGS=${@:3}
 
-PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
-srun -p ${PARTITION} \
-    --job-name=${JOB_NAME} \
-    --gres=gpu:${GPUS_PER_NODE} \
-    --ntasks=${GPUS} \
-    --ntasks-per-node=${GPUS_PER_NODE} \
-    --cpus-per-task=${CPUS_PER_TASK} \
-    --kill-on-bad-exit=1 \
-    ${SRUN_ARGS} \
-    python -u tools/train.py ${CONFIG} --launcher="slurm" ${PY_ARGS}
+##GENERAL -----
+#SBATCH --cpus-per-task=2
+##SBATCH --gres=gpu:1080:1
+#SBATCH --gres=gpu
+#SBATCH --mem=32000M
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+
+#SBATCH --job-name=KD_Dynasegformer
+#SBATCH --output=log/%j.out
+
+##DEBUG -----
+##SBATCH --partition=debug
+##SBATCH --time=00:20:00
+
+##NORMAL -----
+#SBATCH --partition=gpu,gpub
+#SBATCH --time=7-00:00:00
+##SBATCH --exclude=gpu[04,02]
+
+module load comp/gcc/11.2.0
+module load anaconda
+source activate openmmlab
+
+port=$(comm -23 <(seq 30000 65535 | sort) <(ss -tan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+
+srun python -u tools/train.py $1 --launcher="slurm" --resume $2 $3 --cfg-options env_cfg.dist_cfg.port=${port} "${@:4}"

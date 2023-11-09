@@ -1,36 +1,29 @@
-import functools
+import logging
 import os
+import os.path as osp
 import pickle
-from typing import Any, Optional, Union
+from typing import Optional, Union
 
-import mmcv
 import torch
+import torch_pruning as tp
 from mmcv.cnn import ConvModule
 from mmengine.hooks import Hook
-from mmengine.registry import HOOKS
-from torch.nn.modules.module import register_module_forward_pre_hook
-
-from mmseg.models.backbones.mit_prunable import EfficientMultiheadAttention_Conv2d_pruned, MixFFN_Conv2d_pruned
-from mmseg.models.utils import reduce_feature_dim, set_identity_layer_mode
-from mmseg.models.utils.identity_conv import EmptyModule, DummyModule
-from mmseg.models.utils.mask_wrapper import LearnableMask, LearnableKernelMask, LearnableMaskLinear, \
-    LearnableMaskConv2d, rgetattr, LearnableMaskMHA, rsetattr
-import logging
 from mmengine.logging import print_log
-import torch_pruning as tp
-import os.path as osp
+from mmengine.registry import HOOKS
 
-import traceback
-import sys
-
+from mmseg.models.utils import set_identity_layer_mode
+from mmseg.models.utils.identity_conv import EmptyModule, DummyModule
+from mmseg.models.utils.mask_wrapper import LearnableMask, LearnableMaskLinear, \
+    LearnableMaskConv2d, rsetattr
 from mmseg.structures import SegDataSample
 
 DATA_BATCH = Optional[Union[dict, tuple, list]]
 
 
 @HOOKS.register_module()
-class LogisticWeightPruningHook2(Hook):
+class PruningHook(Hook):
     """
+    Hook that prunes the model at given time points and prints the current pruning progress in a given interval
     """
     priority = 'LOW'
 
@@ -48,6 +41,14 @@ class LogisticWeightPruningHook2(Hook):
         self.prune_at_start = prune_at_start
 
     def find_last_history(self, path):
+        """
+        get path of pruning last history file
+        Args:
+            path:
+
+        Returns:
+
+        """
         save_file = osp.join(path, 'last_history')
         if os.path.exists(save_file):
             return save_file
@@ -56,6 +57,14 @@ class LogisticWeightPruningHook2(Hook):
             return None
 
     def get_data_batch(self, input_shape):
+        """
+        get dummy data batch for pruning graph computation
+        Args:
+            input_shape: input shape of image
+
+        Returns:
+
+        """
         result = {}
 
         result['ori_shape'] = input_shape[-2:]
@@ -68,12 +77,22 @@ class LogisticWeightPruningHook2(Hook):
         return data_batch
 
     def is_resume(self, runner):
+        """
+        check whether this training is resumed from a previous checkpoint
+        Args:
+            runner:
+
+        Returns:
+
+        """
         return runner._resume or runner._load_from
 
     def before_run(self, runner) -> None:
         history_filename = self.find_last_history(runner.work_dir)
+
+        # load pruning history if training is resumed
+        # then based on pruning history, prune the model as it was in the checkpoint
         if history_filename is not None and self.is_resume(runner):
-            # print(f"load {history_filename}")
             with open(history_filename, 'rb') as handle:
                 history = pickle.load(handle)
 
@@ -102,19 +121,25 @@ class LogisticWeightPruningHook2(Hook):
 
     def init_model_stats(self, model):
         for n, p in model.named_modules():
-            if isinstance(p, LearnableKernelMask):
-                pass
-            elif isinstance(p, LearnableMask):
+            if isinstance(p, LearnableMask):
                 structures_per_pruned_instance = p.non_pruning_size
                 max_structures = p.pruning_size
                 self.model_sizes_org[n] = (structures_per_pruned_instance, max_structures)
 
     def print_pruning_stats(self, model):
+        """
+        print pruning progress
+        Args:
+            model:
+
+        Returns:
+
+        """
         num_weights_pruned_total = 0
         num_weights_total = 0
         for n, p in model.named_modules():
             if isinstance(p, LearnableMask):
-                num_pruned = int((p.p1 * p.factor).int())
+                num_pruned = int((p.p1 * p.lr_mult_factor).int())
                 structures_per_pruned_instance = self.model_sizes_org[n][0]  # p.non_pruning_size
                 max_structures = self.model_sizes_org[n][1]  # p.pruning_size
                 num_pruned = min(num_pruned, max_structures) + self.model_sizes_org[n][1] - p.pruning_size
@@ -212,7 +237,7 @@ class LogisticWeightPruningHook2(Hook):
         res_bool &= len(list(module.masks.values())) > 0
         #
         is_conv = isinstance(module, torch.nn.Conv2d) or isinstance(module, ConvModule)
-        masks_are_convs = isinstance(first_mask, LearnableMaskConv2d) or isinstance(first_mask, LearnableMaskMHA)
+        masks_are_convs = isinstance(first_mask, LearnableMaskConv2d)
 
         is_linear = isinstance(module, torch.nn.Linear) or isinstance(module, torch.nn.MultiheadAttention)
         masks_are_linear = isinstance(first_mask, LearnableMaskLinear)
@@ -243,8 +268,11 @@ class LogisticWeightPruningHook2(Hook):
             if self._check_if_prunable(module):
                 self.remove_empty_modules(model, module, module_name)
 
+        # get dependency grapgh for pruning
         DG = tp.DependencyGraph().build_dependency(model, example_inputs=data_batch, forward_fn=_forward_func,
                                                    output_transform=_output_transform)
+
+        # prune modules
         for module_name, module in model.named_modules():
             if self._check_if_prunable(module):
                 num_removed += self._prune_module(model, module, DG, _forward_func, _output_transform)

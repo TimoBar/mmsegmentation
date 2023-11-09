@@ -26,7 +26,6 @@ from .point_head import PointHead
 from .psa_head import PSAHead
 from .psp_head import PSPHead
 from .segformer_head import SegformerHead
-from .segformer_head_pruned import SegformerHeadPruned
 from .segmenter_mask_head import SegmenterMaskTransformerHead
 from .sep_aspp_head import DepthwiseSeparableASPPHead
 from .sep_fcn_head import DepthwiseSeparableFCNHead
@@ -34,9 +33,7 @@ from .setr_mla_head import SETRMLAHead
 from .setr_up_head import SETRUPHead
 from .stdc_head import STDCHead
 from .uper_head import UPerHead
-from .zegclip_decode_seg import ATMSingleHeadSeg
 from .segformer_head_prunable import SegformerHeadPrunable
-from .segformer_head_dynasegformer import SegformerHeadDynaSegFormer
 
 __all__ = [
     'FCNHead', 'PSPHead', 'ASPPHead', 'PSAHead', 'NLHead', 'GCHead', 'CCHead',
@@ -46,6 +43,5 @@ __all__ = [
     'SETRMLAHead', 'DPTHead', 'SETRMLAHead', 'SegmenterMaskTransformerHead',
     'SegformerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
     'KernelUpdateHead', 'KernelUpdator', 'MaskFormerHead', 'Mask2FormerHead',
-    'LightHamHead', 'PIDHead', 'DDRHead', 'ATMSingleHeadSeg', 'SegformerHeadPrunable',
-    'SegformerHeadDynaSegFormer'
+    'LightHamHead', 'PIDHead', 'DDRHead', 'SegformerHeadPrunable',
 ]

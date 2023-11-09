@@ -29,7 +29,6 @@ class PrunedEncoderDecoder(EncoderDecoder):
                  data_preprocessor: OptConfigType = None,
                  pretrained: Optional[str] = None,
                  init_cfg: OptMultiConfig = None):
-        #print("Override CLASSES -----------------------------------------------------")
         self.mask_factor = mask_factor
         super().__init__(backbone=backbone, decode_head=decode_head, neck=neck, auxiliary_head=auxiliary_head,
                          train_cfg=train_cfg, test_cfg=test_cfg, pretrained=pretrained,
@@ -46,7 +45,6 @@ class PrunedEncoderDecoder(EncoderDecoder):
         mask_loss = get_p1_loss(self) * self.mask_factor
         losses["decode.mask_loss"] = mask_loss
         losses["decode.loss_ce"] = losses["decode.loss_ce"]
-        #losses.update(add_prefix(get_num_pruned(self), 'decode.pruned'))
 
         if self.with_auxiliary_head:
             loss_aux = self._auxiliary_head_forward_train(x, data_samples)

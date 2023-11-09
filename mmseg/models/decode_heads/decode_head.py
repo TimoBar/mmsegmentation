@@ -8,7 +8,6 @@ import torch.nn as nn
 from mmengine.model import BaseModule
 from torch import Tensor
 
-from acosp.inject import UnprunableConv2d
 from mmseg.structures import build_pixel_sampler
 from mmseg.utils import ConfigType, SampleList
 from ..builder import build_loss
@@ -155,8 +154,7 @@ class BaseDecodeHead(BaseModule, metaclass=ABCMeta):
         else:
             self.sampler = None
 
-        #self.conv_seg = nn.Conv2d(channels, self.out_channels, kernel_size=1)
-        self.conv_seg = UnprunableConv2d(channels, self.out_channels, kernel_size=1)
+        self.conv_seg = nn.Conv2d(channels, self.out_channels, kernel_size=1)
         if dropout_ratio > 0:
             self.dropout = nn.Dropout2d(dropout_ratio)
         else:

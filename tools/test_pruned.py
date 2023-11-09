@@ -6,8 +6,7 @@ import os.path as osp
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 
-from mmseg.engine.hooks import LogisticWeightPruningHook2, FLOPSMeasureHook, FPSMeasureHook, AcospHook, \
-    DynaSegFormerTopRUpdateHook
+from mmseg.engine.hooks import PruningHook, FLOPSMeasureHook, FPSMeasureHook
 
 from zeus.monitor import ZeusMonitor
 
@@ -88,16 +87,12 @@ def print_fps(runner):
             hook.before_train(runner)
 def soft2hard_prunung(runner):
     for hook in runner._hooks:
-        if isinstance(hook, AcospHook):
-            hook.inject.soft_to_hard_k(runner.model)
-        if isinstance(hook, LogisticWeightPruningHook2):
+        if isinstance(hook, PruningHook):
             pytorch_total_params = sum(p.numel() for p in runner.model.parameters() if p.requires_grad)
             hook.num_weights_total_first = pytorch_total_params
             hook.init_model_stats(runner.model)
             hook.prune_weight(runner.model)
             hook.print_pruning_stats(runner.model)
-        if isinstance(hook, DynaSegFormerTopRUpdateHook):
-            hook.set_topr_dgl(0.5, runner.model)
 
     for hook in runner._hooks:
         if isinstance(hook, FLOPSMeasureHook):
@@ -186,21 +181,16 @@ def main():
     cfg.model.pretrained = None
     method = "own"#"dynasegformer"#"own"
     if method == "own":
-        hooks.append(dict(type='LogisticWeightPruningHook2', do_explicit_pruning=True,
+        hooks.append(dict(type='PruningHook', do_explicit_pruning=True,
                           logging_interval=5000, pruning_interval=5000, debug=True))
         hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
                           input_shape=(2048, 1024)))
-        #hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
-        #                  input_shape=(512, 512)))
         hooks.append(dict(type='FPSMeasureHook', interval=5000))
         cfg["custom_hooks"] = hooks
 
         cfg.model.backbone.k = 7
         cfg.model.decode_head.k = 7
-    elif method == "dynasegformer":
-        hooks.append(dict(type='DynaSegFormerTopRUpdateHook', min_topr=0.5, sparsity_annealing_steps=1000))
-        hooks.append(dict(type='FLOPSMeasureHook', model_cfg=cfg["model"], interval=5000,
-                          input_shape=(2048, 1024)))
+
     # build the runner from config
     runner = Runner.from_cfg(cfg)
 
